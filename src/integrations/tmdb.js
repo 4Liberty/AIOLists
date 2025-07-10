@@ -12,7 +12,7 @@
 const axios = require('axios');
 const Cache = require('../utils/cache');
 const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS, TMDB_API_KEY } = require('../config');
-const { getLogo, getTvLogo } = require('../utils/getLogo'); // Import Fanart.tv and TMDB logo functions
+const { getLogo, getTvLogo } = require('../utils/getLogo');
 
 // Create a cache instance for TMDB data with 24 hour TTL
 const tmdbCache = new Cache({ defaultTTL: 24 * 3600 * 1000 }); // 24 hours
@@ -503,7 +503,7 @@ async function validateTMDBKey(userBearerToken) {
 }
 
 /**
- * Convert IMDB ID to TMDB ID using TMDB's find endpoint with user Bearer token
+ * Convert IMDB ID to TMDB ID using TMDB's find endpoint
  * @param {string} imdbId - IMDB ID (e.g., "tt1234567")
  * @returns {Promise<Object|null>} Object with tmdbId and type, or null if not found
  */
@@ -519,7 +519,6 @@ async function convertImdbToTmdbId(imdbId) {
   }
 
   try {
-    console.log(`[TMDB] Using API Key for /find: ${TMDB_API_KEY ? 'Yes' : 'No'}`); // Debugging line
     const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
       params: {
         external_source: 'imdb_id',
