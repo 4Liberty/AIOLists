@@ -1,4 +1,4 @@
-const { getLogo } = require('./getLogo'); // Adjust the path if needed
+const { getLogo, getTvLogo } = require('./getLogo'); // Adjust the path if needed
 
 // src/utils/metadataFetcher.js
 const axios = require('axios');
@@ -18,6 +18,19 @@ const BATCH_SIZE = METADATA_BATCH_SIZE || 20;
 async function enrichItemWithLogo(item, tmdbId, language = 'en', originalLanguage = 'en') {
   try {
     const logoUrl = await getLogo(tmdbId, language, originalLanguage);
+    if (logoUrl) {
+      return { ...item, logo: logoUrl };
+    }
+  } catch (e) {
+    // Fail silently, fallback to existing logo
+  }
+  return item;
+}
+
+// Helper to enrich an item with a dynamic TV logo
+async function enrichItemWithTvLogo(item, tvdbId, tmdbId, language = 'en', originalLanguage = 'en') {
+  try {
+    const logoUrl = await getTvLogo(tvdbId, tmdbId, language, originalLanguage);
     if (logoUrl) {
       return { ...item, logo: logoUrl };
     }
@@ -250,9 +263,18 @@ async function enrichItemsWithTMDB(items, language = 'en-US', userBearerToken = 
 
     const enrichedItemsWithLogos = await Promise.all(
   enrichedItems.map(async (item) => {
-    let tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
-    const originalLanguage = item.originalLanguage || 'en';
-    return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
+    if (item.type === 'series') {
+      // For TV shows, use tvdbId and tmdbId if available
+      const tvdbId = item.tvdb_id || undefined;
+      const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
+      const originalLanguage = item.originalLanguage || 'en';
+      return enrichItemWithTvLogo(item, tvdbId, tmdbId, language, originalLanguage);
+    } else {
+      // For movies
+      const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
+      const originalLanguage = item.originalLanguage || 'en';
+      return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
+    }
   })
 );
 return enrichedItemsWithLogos;
@@ -338,12 +360,24 @@ async function enrichItemsWithCinemeta(items) {
     // Count items with genre information after Cinemeta enrichment
     const itemsWithGenres = enrichedItems.filter(item => item.genres && item.genres.length > 0);
 
-    const enrichedItemsWithLogos = await Promise.all(
+const enrichedItemsWithLogos = await Promise.all(
   enrichedItems.map(async (item) => {
-    // Try TMDB ID if available, otherwise fallback to imdb_id (getLogo will skip if undefined)
-    let tmdbId = item.tmdbId || undefined;
-    const originalLanguage = item.originalLanguage || 'en';
-    return enrichItemWithLogo(item, tmdbId, 'en', originalLanguage);
+    if (item.type === 'series') {
+      // For TV shows, use tvdbId and tmdbId if available
+      const tvdbId = item.tvdb_id || undefined;
+      const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
+      const originalLanguage = item.originalLanguage || 'en';
+      return enrichItemWithTvLogo(item, tvdbId, tmdbId, language, originalLanguage);
+    } else {
+      // For movies
+      const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
+      const originalLanguage = item.originalLanguage || 'en';
+      return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
+    }
+  })
+);
+return enrichedItemsWithLogos;
+    
   })
 );
 return enrichedItemsWithLogos;
