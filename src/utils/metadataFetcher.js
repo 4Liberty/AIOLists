@@ -273,10 +273,6 @@ const enrichedItemsWithLogos = await Promise.all(
       const originalLanguage = item.originalLanguage || 'en';
       return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
     }
-  })
-);
-    
-return enrichedItemsWithLogos;
     
   } catch (error) {
     console.error(`[DEBUG] Error in TMDB enrichment process:`, error.message);
