@@ -1,12 +1,8 @@
 // src/utils/getLogo.js
 const FanartTvApi = require("fanart.tv-api");
-const { MovieDb } = require("moviedb-promise");
 
+// Directly access and clean the environment variables
 const FANART_API_KEY = process.env.FANART_API_KEY ? process.env.FANART_API_KEY.trim() : null;
-const TMDB_API_KEY = process.env.TMDB_API_KEY ? process.env.TMDB_API_KEY.trim() : null;
-
-console.log(`[DEBUG] Read FANART_API_KEY: ${FANART_API_KEY ? 'found a key' : 'not found'}`);
-console.log(`[DEBUG] Read TMDB_API_KEY: ${TMDB_API_KEY ? 'found a key' : 'not found'}`);
 
 let fanart = null;
 if (FANART_API_KEY) {
@@ -19,19 +15,6 @@ if (FANART_API_KEY) {
 } else {
   console.warn("WARNING: FANART_API_KEY is not set. Fanart.tv logos will be unavailable.");
 }
-
-let moviedb = null;
-if (TMDB_API_KEY) {
-    try {
-        moviedb = new MovieDb(TMDB_API_KEY);
-        console.log("TMDB client (moviedb-promise) initialized successfully.");
-    } catch (e) {
-        console.error("ERROR: Failed to initialize moviedb-promise with TMDB_API_KEY:", e.message);
-    }
-} else {
-    console.warn("WARNING: TMDB_API_KEY is not set for moviedb-promise. TMDB logo fallback may be limited.");
-}
-
 
 function pickLogo(logos, language, originalLanguage) {
   const lang = language.split("-")[0];
