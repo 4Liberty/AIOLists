@@ -2,7 +2,15 @@ require('dotenv').config();
 const FanartTvApi = require("fanart.tv-api");
 const apiKey = process.env.FANART_API_KEY;
 const baseUrl = "http://webservice.fanart.tv/v3/";
-const fanart = new FanartTvApi({ apiKey, baseUrl });
+
+// Add a check for the FANART_API_KEY
+if (!apiKey) {
+  console.error("Fanart.tv API key is not defined. Please add it to your .env file.");
+}
+
+// Pass the apiKey to the FanartTvApi constructor
+const fanart = new FanartTvApi(apiKey);
+
 
 const { MovieDb } = require("moviedb-promise");
 const moviedb = new MovieDb(process.env.TMDB_API);
@@ -19,6 +27,11 @@ function pickLogo(logos, language, originalLanguage) {
 }
 
 async function getLogo(tmdbId, language, originalLanguage) {
+  if (!apiKey) {
+    // Return an empty string if the API key is missing
+    return '';
+  }
+
   if (!tmdbId) {
     throw new Error(`TMDB ID not available for logo: ${tmdbId}`);
   }
@@ -56,6 +69,11 @@ async function getLogo(tmdbId, language, originalLanguage) {
 }
 
 async function getTvLogo(tvdb_id, tmdbId, language, originalLanguage) {
+  if (!apiKey) {
+    // Return an empty string if the API key is missing
+    return '';
+  }
+
   if (!tvdb_id && !tmdbId) {
     throw new Error(`TVDB ID and TMDB ID not available for logos.`);
   }
