@@ -359,19 +359,6 @@ async function enrichItemsWithCinemeta(items) {
     // Count items with genre information after Cinemeta enrichment
     const itemsWithGenres = enrichedItems.filter(item => item.genres && item.genres.length > 0);
 
-const enrichedItemsWithLogos = await Promise.all(
-  enrichedItems.map(async (item) => {
-    if (item.type === 'series') {
-      // For TV shows, use tvdbId and tmdbId if available
-      const tvdbId = item.tvdb_id || undefined;
-      const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
-      const originalLanguage = item.originalLanguage || 'en';
-      return enrichItemWithTvLogo(item, tvdbId, tmdbId, language, originalLanguage);
-    } else {
-      // For movies
-      const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
-      const originalLanguage = item.originalLanguage || 'en';
-      return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
     }
   })
 );
