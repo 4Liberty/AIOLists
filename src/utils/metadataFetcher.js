@@ -1,9 +1,8 @@
-const { getLogo, getTvLogo } = require('./getLogo'); // Adjust the path if needed
-
 // src/utils/metadataFetcher.js
 const axios = require('axios');
 const { batchFetchPosters } = require('./posters');
 const { METADATA_BATCH_SIZE } = require('../config');
+const { getLogo, getTvLogo } = require('./getLogo');
 
 // Import TMDB functions that use the built-in Bearer token
 const {
