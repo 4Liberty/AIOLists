@@ -1,17 +1,18 @@
 /**
  * TMDB Integration - OAuth Authentication for User Lists
- * 
+ *
  * TMDB API v3 authentication flow:
  * 1. Create a request token via /3/authentication/token/new
- * 2. User authorization through TMDB website  
+ * 2. User authorization through TMDB website
  * 3. Create session ID via /3/authentication/session/new
- * 
+ *
  * This allows access to user's watchlists, favorites, and custom lists.
  */
 
 const axios = require('axios');
 const Cache = require('../utils/cache');
-const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS } = require('../config');
+const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS, TMDB_API_KEY } = require('../config');
+const { getLogo, getTvLogo } = require('../utils/getLogo'); // Import Fanart.tv and TMDB logo functions
 
 // Create a cache instance for TMDB data with 24 hour TTL
 const tmdbCache = new Cache({ defaultTTL: 24 * 3600 * 1000 }); // 24 hours
@@ -32,7 +33,7 @@ async function createTmdbRequestToken(userBearerToken) {
   if (!userBearerToken) {
     throw new Error('TMDB Bearer Token is required');
   }
-  
+
   try {
     const response = await axios.get(`${TMDB_BASE_URL_V3}/authentication/token/new`, {
       headers: {
@@ -44,10 +45,10 @@ async function createTmdbRequestToken(userBearerToken) {
 
     if (response.data && response.data.success) {
       const baseAuthUrl = `https://www.themoviedb.org/authenticate/${response.data.request_token}`;
-      const authUrl = TMDB_REDIRECT_URI ? 
-        `${baseAuthUrl}?redirect_to=${encodeURIComponent(TMDB_REDIRECT_URI)}` : 
+      const authUrl = TMDB_REDIRECT_URI ?
+        `${baseAuthUrl}?redirect_to=${encodeURIComponent(TMDB_REDIRECT_URI)}` :
         baseAuthUrl;
-      
+
       return {
         success: true,
         requestToken: response.data.request_token,
@@ -72,7 +73,7 @@ async function createTmdbSession(requestToken, userBearerToken) {
   if (!userBearerToken) {
     throw new Error('TMDB Bearer Token is required');
   }
-  
+
   try {
     const response = await axios.post(`${TMDB_BASE_URL_V3}/authentication/session/new`, {
       request_token: requestToken
@@ -108,7 +109,7 @@ async function getTmdbAccountDetails(sessionId, userBearerToken) {
   if (!userBearerToken) {
     throw new Error('TMDB Bearer Token is required');
   }
-  
+
   try {
     const response = await axios.get(`${TMDB_BASE_URL_V3}/account`, {
       params: {
@@ -146,7 +147,7 @@ async function getTmdbAuthUrl(userBearerToken) {
 async function authenticateTmdb(requestToken, userBearerToken) {
   const sessionData = await createTmdbSession(requestToken, userBearerToken);
   const accountData = await getTmdbAccountDetails(sessionData.sessionId, userBearerToken);
-  
+
   return {
     sessionId: sessionData.sessionId,
     accountId: accountData.id,
@@ -185,7 +186,7 @@ async function fetchTmdbLists(userConfig) {
     });
 
     const userLists = listsResponse.data?.results || [];
-    
+
     // Add special lists (watchlist, favorites)
     const specialLists = [
       {
@@ -196,7 +197,7 @@ async function fetchTmdbLists(userConfig) {
       },
       {
         id: 'tmdb_favorites',
-        name: 'TMDB Favorites', 
+        name: 'TMDB Favorites',
         isTmdbFavorites: true,
         description: 'Your TMDB favorites'
       }
@@ -280,14 +281,14 @@ async function fetchTmdbListItems(listId, userConfig, skip = 0, sortBy = 'create
 
       const movies = moviesResponse.data?.results || [];
       const tvShows = tvResponse.data?.results || [];
-      
+
       const allItems = [
         ...movies.map(item => ({ ...item, media_type: 'movie' })),
         ...tvShows.map(item => ({ ...item, media_type: 'tv' }))
       ];
 
       return processListItems(allItems, userConfig, genre);
-      
+
     } else if (listId === 'tmdb_favorites') {
       // Fetch favorites (both movies and TV shows)
       const [moviesResponse, tvResponse] = await Promise.all([
@@ -305,19 +306,19 @@ async function fetchTmdbListItems(listId, userConfig, skip = 0, sortBy = 'create
 
       const movies = moviesResponse.data?.results || [];
       const tvShows = tvResponse.data?.results || [];
-      
+
       const allItems = [
         ...movies.map(item => ({ ...item, media_type: 'movie' })),
         ...tvShows.map(item => ({ ...item, media_type: 'tv' }))
       ];
 
       return processListItems(allItems, userConfig, genre);
-      
+
     } else if (listId.startsWith('tmdb_list_')) {
       // Fetch custom list
       const tmdbListId = listId.replace('tmdb_list_', '');
       apiUrl = `${TMDB_BASE_URL_V3}/list/${tmdbListId}`;
-      
+
       const response = await axios.get(apiUrl, {
         headers,
         params,
@@ -326,7 +327,7 @@ async function fetchTmdbListItems(listId, userConfig, skip = 0, sortBy = 'create
 
       const items = response.data?.items || [];
       return processListItems(items, userConfig, genre);
-      
+
     } else {
       console.warn(`Unknown TMDB list type: ${listId}`);
       return null;
@@ -356,11 +357,11 @@ async function processListItems(items, userConfig, genre) {
   // Step 1: Process basic item data and determine types
   const processedItems = items.map(item => {
     // Determine if it's a movie or TV show
-    const isMovie = item.media_type === 'movie' || 
-                    (item.title && !item.name) || 
+    const isMovie = item.media_type === 'movie' ||
+                    (item.title && !item.name) ||
                     (item.release_date && !item.first_air_date);
     const type = isMovie ? 'movie' : 'series';
-    
+
     if (type === 'movie') hasMovies = true;
     if (type === 'series') hasShows = true;
 
@@ -371,7 +372,7 @@ async function processListItems(items, userConfig, genre) {
       name: isMovie ? item.title : item.name,
       overview: item.overview,
       description: item.overview,
-      year: isMovie ? 
+      year: isMovie ?
         (item.release_date ? item.release_date.split('-')[0] : undefined) :
         (item.first_air_date ? item.first_air_date.split('-')[0] : undefined),
       release_date: item.release_date,
@@ -391,12 +392,12 @@ async function processListItems(items, userConfig, genre) {
 
   // Step 2: Get IMDB IDs for the items (required for Stremio compatibility)
   const itemsWithTmdbIds = processedItems.filter(item => item.tmdb_id);
-  
+
   if (itemsWithTmdbIds.length > 0) {
     // Fetch external IDs with concurrency control to avoid overwhelming the API
     const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 5;
-  
-    
+
+
     const chunks = [];
     for (let i = 0; i < itemsWithTmdbIds.length; i += CONCURRENCY_LIMIT) {
       chunks.push(itemsWithTmdbIds.slice(i, i + CONCURRENCY_LIMIT));
@@ -414,7 +415,7 @@ async function processListItems(items, userConfig, genre) {
             },
             timeout: TMDB_REQUEST_TIMEOUT
           });
-          
+
           const externalIds = response.data;
           return {
             tmdb_id: item.tmdb_id,
@@ -431,13 +432,13 @@ async function processListItems(items, userConfig, genre) {
 
       const chunkResults = await Promise.all(chunkPromises);
       externalIdsResults.push(...chunkResults);
-      
+
       // Small delay between chunks to respect API rate limits
       if (chunk !== chunks[chunks.length - 1]) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
-    
+
     // Create a map for quick lookup
     const externalIdsMap = {};
     externalIdsResults.forEach(result => {
@@ -484,7 +485,7 @@ async function validateTMDBKey(userBearerToken) {
   if (!userBearerToken) {
     return false;
   }
-  
+
   try {
     const response = await axios.get(`${TMDB_BASE_URL_V3}/configuration`, {
       headers: {
@@ -493,7 +494,7 @@ async function validateTMDBKey(userBearerToken) {
       },
       timeout: 10000
     });
-    
+
     return response.status === 200 && response.data;
   } catch (error) {
     console.error('TMDB API connectivity test error:', error.message);
@@ -504,36 +505,35 @@ async function validateTMDBKey(userBearerToken) {
 /**
  * Convert IMDB ID to TMDB ID using TMDB's find endpoint with user Bearer token
  * @param {string} imdbId - IMDB ID (e.g., "tt1234567")
- * @param {string} userBearerToken - User's TMDB Read Access Token
  * @returns {Promise<Object|null>} Object with tmdbId and type, or null if not found
  */
-async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
+async function convertImdbToTmdbId(imdbId) {
   if (!imdbId || !imdbId.match(/^tt\d+$/)) {
     return null;
   }
-  
+
   const cacheKey = `imdb_to_tmdb_${imdbId}`;
   const cachedResult = imdbToTmdbCache.get(cacheKey);
   if (cachedResult) {
     return cachedResult === 'null' ? null : cachedResult;
   }
-  
+
   try {
+    console.log(`[TMDB] Using API Key for /find: ${TMDB_API_KEY ? 'Yes' : 'No'}`); // Debugging line
     const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
       params: {
-        external_source: 'imdb_id'
+        external_source: 'imdb_id',
+        api_key: TMDB_API_KEY
       },
       headers: {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${userBearerToken}`
+        'accept': 'application/json'
       },
       timeout: TMDB_REQUEST_TIMEOUT
     });
-    
+
     const data = response.data;
     let result = null;
-    
-    // Check for movie first, then TV show
+
     if (data.movie_results && data.movie_results.length > 0) {
       result = {
         tmdbId: data.movie_results[0].id,
@@ -545,14 +545,12 @@ async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER
         type: 'series'
       };
     }
-    
-    // Cache the result (or null if not found)
+
     imdbToTmdbCache.set(cacheKey, result || 'null');
     return result;
-    
+
   } catch (error) {
     console.error(`Error converting IMDB ID ${imdbId} to TMDB ID:`, error.message);
-    // Cache negative result for a shorter time
     imdbToTmdbCache.set(cacheKey, 'null', 60 * 60 * 1000); // 1 hour
     return null;
   }
@@ -566,10 +564,10 @@ async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER
  */
 async function batchConvertImdbToTmdbIds(imdbIds, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!imdbIds?.length) return {};
-  
+
   const results = {};
   const uncachedIds = [];
-  
+
   // Check cache first
   for (const imdbId of imdbIds) {
     const cacheKey = `imdb_to_tmdb_${imdbId}`;
@@ -580,12 +578,12 @@ async function batchConvertImdbToTmdbIds(imdbIds, userBearerToken = DEFAULT_TMDB
       uncachedIds.push(imdbId);
     }
   }
-  
+
   if (uncachedIds.length === 0) return results;
-  
+
   // Process uncached IDs in parallel with concurrency control
   const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 15; // Use config value for consistency, optimized for conversion
-  
+
   const processChunk = async (chunk) => {
     const chunkPromises = chunk.map(async (imdbId) => {
       try {
@@ -596,28 +594,28 @@ async function batchConvertImdbToTmdbIds(imdbIds, userBearerToken = DEFAULT_TMDB
         return { imdbId, result: null };
       }
     });
-    
+
     return Promise.all(chunkPromises);
   };
-  
+
   // Split into chunks and process them
   const chunks = [];
   for (let i = 0; i < uncachedIds.length; i += CONCURRENCY_LIMIT) {
     chunks.push(uncachedIds.slice(i, i + CONCURRENCY_LIMIT));
   }
-  
+
   for (const chunk of chunks) {
     const chunkResults = await processChunk(chunk);
     chunkResults.forEach(({ imdbId, result }) => {
       results[imdbId] = result;
     });
-    
+
     // Small delay between chunks to be respectful to the API
     if (chunk !== chunks[chunks.length - 1]) {
       await new Promise(resolve => setTimeout(resolve, 100)); // Reduced from 200ms to 100ms
     }
   }
-  
+
   return results;
 }
 
@@ -631,15 +629,15 @@ async function batchConvertImdbToTmdbIds(imdbIds, userBearerToken = DEFAULT_TMDB
  */
 async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!tmdbId) return null;
-  
+
   // Include version in cache key to invalidate old cached data with incorrect episode numbering
-  const EPISODE_NUMBERING_VERSION = 'v2'; 
+  const EPISODE_NUMBERING_VERSION = 'v2';
   const cacheKey = `tmdb_${type}_${tmdbId}_${language}_${EPISODE_NUMBERING_VERSION}`;
   const cachedResult = tmdbCache.get(cacheKey);
   if (cachedResult) {
     return cachedResult === 'null' ? null : cachedResult;
   }
-  
+
   try {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
     const response = await axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${tmdbId}`, {
@@ -653,22 +651,22 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
       },
       timeout: TMDB_REQUEST_TIMEOUT
     });
-    
+
     const data = response.data;
-    
+
     // For series, also fetch season and episode data
     if (type === 'series' && data.number_of_seasons) {
       try {
-    
-        
+
+
         // Fetch episode data for all seasons
         const maxSeasons = data.number_of_seasons;
         const seasonPromises = [];
-        
+
         for (let seasonNum = 0; seasonNum <= maxSeasons; seasonNum++) {
           // Skip season 0 if it has no episodes or if there are too many seasons
           if (seasonNum === 0 && data.number_of_seasons > 5) continue;
-          
+
           seasonPromises.push(
             axios.get(`${TMDB_BASE_URL_V3}/tv/${tmdbId}/season/${seasonNum}`, {
               params: { language: language },
@@ -683,13 +681,13 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
             })
           );
         }
-        
+
         const seasonResponses = await Promise.all(seasonPromises);
         const validSeasons = seasonResponses.filter(response => response && response.data);
-        
+
         // Add episode data to the main data object
         data.seasons_with_episodes = validSeasons.map(response => response.data);
-        
+
 
       } catch (error) {
         console.warn(`[TMDB] Failed to fetch episode data for series ${tmdbId}:`, error.message);
@@ -697,12 +695,20 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
       }
     }
 
+    // Fetch Fanart.tv logo
+    if (type === 'movie') {
+        data.logo = await getLogo(tmdbId, language, data.original_language);
+    } else if (type === 'series') {
+        data.logo = await getTvLogo(data.external_ids?.tvdb_id, tmdbId, language, data.original_language);
+    }
+
+
     // Convert TMDB format to Stremio-compatible format
     const stremioMeta = convertTmdbToStremioFormat(data, type);
-    
+
     tmdbCache.set(cacheKey, stremioMeta);
     return stremioMeta;
-    
+
   } catch (error) {
     console.error(`Error fetching TMDB metadata for ${type} ${tmdbId}:`, error.message);
     tmdbCache.set(cacheKey, 'null', 60 * 60 * 1000); // Cache error for 1 hour
@@ -718,30 +724,30 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
  */
 function convertTmdbToStremioFormat(tmdbData, type) {
   const isMovie = type === 'movie';
-  
+
   // Use tmdb: format for ID, preserve IMDB ID separately
   const tmdbId = `tmdb:${tmdbData.id}`;
   const imdbId = tmdbData.external_ids?.imdb_id || tmdbData.imdb_id;
-  
+
   // Extract cast and crew
   const cast = tmdbData.credits?.cast?.slice(0, 10).map(person => person.name) || [];
   const crew = tmdbData.credits?.crew || [];
   const directors = crew.filter(person => person.job === 'Director').map(person => person.name);
-  const writers = crew.filter(person => 
+  const writers = crew.filter(person =>
     person.job === 'Writer' || person.job === 'Screenplay' || person.job === 'Story'
   ).map(person => person.name);
-  
+
   // Extract and format trailers
-  const trailerVideos = tmdbData.videos?.results?.filter(video => 
+  const trailerVideos = tmdbData.videos?.results?.filter(video =>
     video.type === 'Trailer' && video.site === 'YouTube'
   ) || [];
-  
+
   const trailers = trailerVideos.map(video => `https://www.youtube.com/watch?v=${video.key}`);
   const trailerStreams = trailerVideos.map(video => ({
     title: tmdbData.title || tmdbData.name,
     ytId: video.key
   }));
-  
+
   // Format release date
   const releaseDate = isMovie ? tmdbData.release_date : tmdbData.first_air_date;
   const releaseYear = releaseDate ? releaseDate.split('-')[0] : undefined;
@@ -750,12 +756,12 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   // Format year and releaseInfo for series to match Cinemeta format
   let formattedYear = releaseYear;
   let formattedReleaseInfo = releaseYear;
-  
+
   if (!isMovie && releaseYear) {
     // For series, check if it's still ongoing or ended
     const lastAirDate = tmdbData.last_air_date;
     const status = tmdbData.status;
-    
+
     if (status === 'Returning Series' || status === 'In Production' || !lastAirDate) {
       // Ongoing series - format as "1999-"
       formattedYear = `${releaseYear}-`;
@@ -771,8 +777,8 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   }
 
   // Get logos from TMDB images
-  let logo = undefined;
-  if (tmdbData.images?.logos && tmdbData.images.logos.length > 0) {
+  let logo = tmdbData.logo; // Use the logo passed in from fetchTmdbMetadata
+  if (!logo && tmdbData.images?.logos && tmdbData.images.logos.length > 0) {
     // Prefer English logos or the first available
     const englishLogo = tmdbData.images.logos.find(img => img.iso_639_1 === 'en') || tmdbData.images.logos[0];
     logo = `https://image.tmdb.org/t/p/original${englishLogo.file_path}`;
@@ -790,18 +796,18 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   let videos = [];
   if (!isMovie && tmdbData.seasons_with_episodes) {
 
-    
+
     // Detect if this is likely an anime with absolute episode numbering
     // This happens when TMDB uses continuous numbering across seasons
     let isAnimeWithAbsoluteNumbering = false;
     let totalEpisodesProcessed = 0;
-    
+
     // Check if any season has episodes with numbers that seem to be absolute rather than season-relative
     for (const season of tmdbData.seasons_with_episodes) {
       if (season.episodes && season.episodes.length > 0) {
         const firstEpisode = season.episodes[0];
         const lastEpisode = season.episodes[season.episodes.length - 1];
-        
+
         // If the first episode number is much higher than 1 and doesn't match the expected pattern
         // for season-relative numbering, this is likely absolute numbering
         if (firstEpisode.episode_number > season.episodes.length * 2) {
@@ -809,14 +815,14 @@ function convertTmdbToStremioFormat(tmdbData, type) {
           console.log(`[TMDB] Absolute numbering detected: Season ${season.season_number} starts with episode ${firstEpisode.episode_number} but has ${season.episodes.length} episodes`);
           break;
         }
-        
+
         // If we see episodes with numbers like 100+ in what should be early seasons
         if (season.season_number <= 5 && firstEpisode.episode_number >= 100) {
           isAnimeWithAbsoluteNumbering = true;
           console.log(`[TMDB] Absolute numbering detected: Season ${season.season_number} has episodes starting from ${firstEpisode.episode_number}`);
           break;
         }
-        
+
         // Additional check: if episode numbers don't reset between seasons
         if (totalEpisodesProcessed > 0 && firstEpisode.episode_number > totalEpisodesProcessed + 10) {
           // There's a gap, but if the gap is too large, it's probably absolute numbering
@@ -829,11 +835,11 @@ function convertTmdbToStremioFormat(tmdbData, type) {
           console.log(`[TMDB] Absolute numbering detected: Episodes continue from previous season (${totalEpisodesProcessed} -> ${firstEpisode.episode_number})`);
           break;
         }
-        
+
         totalEpisodesProcessed += season.episodes.length;
       }
     }
-    
+
     // Additional check for series with many episodes in later seasons starting with high numbers
     // This catches cases like One Piece where early detection might miss it
     if (!isAnimeWithAbsoluteNumbering) {
@@ -849,34 +855,34 @@ function convertTmdbToStremioFormat(tmdbData, type) {
         }
       }
     }
-    
+
     console.log(`[TMDB] Processing ${tmdbData.name} - Anime absolute numbering detected: ${isAnimeWithAbsoluteNumbering}`);
-    
+
     tmdbData.seasons_with_episodes.forEach(season => {
       if (season.episodes && Array.isArray(season.episodes)) {
         season.episodes.forEach((episode, episodeIndex) => {
           // Calculate proper episode number for the season
           let seasonEpisodeNumber = episode.episode_number;
-          
+
           if (isAnimeWithAbsoluteNumbering) {
             // For anime with absolute numbering, use the position within the season
             // rather than the absolute episode number
             seasonEpisodeNumber = episodeIndex + 1;
-            
+
             console.log(`[TMDB] Converted episode ${episode.episode_number} to season ${season.season_number} episode ${seasonEpisodeNumber} for ${tmdbData.name}`);
           }
-          
+
           // Use IMDB ID for episode IDs if available, otherwise use TMDB format
-          const episodeId = imdbId && imdbId.startsWith('tt') ? 
+          const episodeId = imdbId && imdbId.startsWith('tt') ?
             `${imdbId}:${season.season_number}:${seasonEpisodeNumber}` :
             `${tmdbId}:${season.season_number}:${seasonEpisodeNumber}`;
-          
+
           // Format air date if available
           let airDateFormatted = null;
           if (episode.air_date) {
             airDateFormatted = `${episode.air_date}T00:00:00.001Z`;
           }
-          
+
           videos.push({
             id: episodeId,
             name: episode.name || `Episode ${seasonEpisodeNumber}`,
@@ -895,7 +901,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
         });
       }
     });
-    
+
     // Sort episodes by season and episode number (now using season-relative numbers)
     videos.sort((a, b) => {
       if (a.season !== b.season) {
@@ -903,7 +909,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
       }
       return a.episode - b.episode;
     });
-    
+
 
   }
 
@@ -911,6 +917,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   const metadata = {
     id: tmdbId,
     imdb_id: imdbId,
+    tvdb_id: tmdbData.external_ids?.tvdb_id,
     type: type,
     name: isMovie ? tmdbData.title : tmdbData.name,
     description: tmdbData.overview || "",
@@ -919,7 +926,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
     releaseInfo: formattedReleaseInfo,
     year: formattedYear,
     released: releasedFormatted,
-    runtime: isMovie ? 
+    runtime: isMovie ?
       (tmdbData.runtime ? `${tmdbData.runtime} min` : undefined) :
       (tmdbData.episode_run_time?.[0] ? `${tmdbData.episode_run_time[0]} min` : undefined),
     genres: tmdbData.genres?.map(genre => genre.name) || [],
@@ -928,7 +935,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
     director: directors.length > 0 ? directors : undefined,
     writer: writers.length > 0 ? writers : undefined,
     imdbRating: tmdbData.vote_average ? tmdbData.vote_average.toFixed(1) : undefined,
-    country: isMovie ? 
+    country: isMovie ?
       (tmdbData.production_countries?.map(country => country.name)?.[0] || 'Unknown') :
       (tmdbData.origin_country?.[0] || 'Unknown'),
     trailers: trailers.length > 0 ? trailerVideos.map(video => ({ source: video.key, type: 'Trailer' })) : undefined,
@@ -940,20 +947,20 @@ function convertTmdbToStremioFormat(tmdbData, type) {
     tmdbRating: tmdbData.vote_average,
     tmdbVotes: tmdbData.vote_count,
     popularity: tmdbData.popularity ? (tmdbData.popularity / 100) : 0, // Normalize to match Cinemeta scale
-    
+
     // Add logo if available
     logo: logo,
-    
+
     // Add Stremio-specific fields for better integration
     popularities: {
       moviedb: tmdbData.popularity || 0,
       tmdb: tmdbData.popularity || 0,
       stremio: tmdbData.popularity ? (tmdbData.popularity / 100) : 0
     },
-    
+
     // Create links similar to Cinemeta
     links: [],
-    
+
     // Enhanced behavior hints for better Stremio integration
     behaviorHints: {
       defaultVideoId: !isMovie ? null : (imdbId && imdbId.startsWith('tt') ? imdbId : tmdbId),
@@ -962,13 +969,13 @@ function convertTmdbToStremioFormat(tmdbData, type) {
       configurable: false,
       configurationRequired: false
     },
-    
+
     // Add detailed cast information in app_extras for richer metadata
     app_extras: {
       cast: detailedCast.length > 0 ? detailedCast : undefined
     }
   };
-  
+
   // Build links array similar to Cinemeta
   if (metadata.links) {
     // IMDb rating link
@@ -979,9 +986,9 @@ function convertTmdbToStremioFormat(tmdbData, type) {
         url: `https://imdb.com/title/${imdbId}`
       });
     }
-    
 
-    
+
+
     // Genre links
     if (metadata.genres && metadata.genres.length > 0) {
       metadata.genres.forEach(genre => {
@@ -992,7 +999,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
         });
       });
     }
-    
+
     // Cast links
     if (metadata.cast && metadata.cast.length > 0) {
       metadata.cast.slice(0, 5).forEach(actor => { // Limit to 5 cast members
@@ -1003,7 +1010,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
         });
       });
     }
-    
+
     // Director links
     if (metadata.director && metadata.director.length > 0) {
       metadata.director.forEach(dir => {
@@ -1014,19 +1021,19 @@ function convertTmdbToStremioFormat(tmdbData, type) {
         });
       });
     }
-    
+
     // Writer links
     if (metadata.writer && metadata.writer.length > 0) {
       metadata.writer.forEach(writer => {
         metadata.links.push({
           name: writer,
-          category: "Writers", 
+          category: "Writers",
           url: `stremio:///search?search=${encodeURIComponent(writer)}`
         });
       });
     }
   }
-  
+
   // Add slug for Stremio compatibility
   if (metadata.name && imdbId && imdbId.startsWith('tt')) {
     // Use IMDB ID for slug to match expected format (series/name-imdbNumber)
@@ -1036,7 +1043,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
     // Fallback to TMDB ID if no IMDB ID
     metadata.slug = `${type}/content-${tmdbData.id}`;
   }
-  
+
   return metadata;
 }
 
@@ -1049,10 +1056,10 @@ function convertTmdbToStremioFormat(tmdbData, type) {
  */
 async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!items?.length) return {};
-  
+
   const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 12; // Use config value, increased from 8
   const results = {};
-  
+
   const processChunk = async (chunk) => {
     const chunkPromises = chunk.map(async (item) => {
       const identifier = item.imdbId || `tmdb:${item.tmdbId}`;
@@ -1072,16 +1079,16 @@ async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken
         return { identifier, metadata: null };
       }
     });
-    
+
     return Promise.all(chunkPromises);
   };
-  
+
   // Split into chunks and process them
   const chunks = [];
   for (let i = 0; i < items.length; i += CONCURRENCY_LIMIT) {
     chunks.push(items.slice(i, i + CONCURRENCY_LIMIT));
   }
-  
+
   for (const chunk of chunks) {
     const chunkResults = await processChunk(chunk);
     chunkResults.forEach(({ identifier, metadata }) => {
@@ -1089,13 +1096,13 @@ async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken
         results[identifier] = metadata;
       }
     });
-    
+
     // Small delay between chunks to respect API rate limits
     if (chunk !== chunks[chunks.length - 1]) {
       await new Promise(resolve => setTimeout(resolve, 100)); // Reduced from 150ms to 100ms
     }
   }
-  
+
   return results;
 }
 
@@ -1107,13 +1114,13 @@ async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken
  */
 async function fetchTmdbGenres(language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!language) return [];
-  
+
   const cacheKey = `tmdb_genres_${language}`;
   const cachedGenres = tmdbCache.get(cacheKey);
   if (cachedGenres) {
     return cachedGenres === 'null' ? [] : cachedGenres;
   }
-  
+
   try {
     // Fetch both movie and TV genres
     const [movieResponse, tvResponse] = await Promise.all([
@@ -1138,12 +1145,12 @@ async function fetchTmdbGenres(language = 'en-US', userBearerToken = DEFAULT_TMD
         timeout: TMDB_REQUEST_TIMEOUT
       })
     ]);
-    
+
     // Combine and deduplicate genres
     const movieGenres = movieResponse.data.genres || [];
     const tvGenres = tvResponse.data.genres || [];
     const allGenres = [...movieGenres, ...tvGenres];
-    
+
     // Create a map to deduplicate by name (case-insensitive)
     const genreMap = new Map();
     allGenres.forEach(genre => {
@@ -1152,14 +1159,14 @@ async function fetchTmdbGenres(language = 'en-US', userBearerToken = DEFAULT_TMD
         genreMap.set(key, genre.name);
       }
     });
-    
+
     // Add "All" option at the beginning
     const translatedGenres = ['All', ...Array.from(genreMap.values()).sort()];
-    
+
     // Cache for 24 hours
     tmdbCache.set(cacheKey, translatedGenres, 24 * 3600 * 1000);
     return translatedGenres;
-    
+
   } catch (error) {
     console.error(`Error fetching TMDB genres for language ${language}:`, error.message);
     tmdbCache.set(cacheKey, 'null', 60 * 60 * 1000); // Cache error for 1 hour
@@ -1178,25 +1185,25 @@ function clearTmdbCaches() {
 // Test function to verify anime episode numbering fix (for development/debugging)
 async function testAnimeEpisodeNumbering(tmdbId = 37854, bearerToken = null) {
   console.log(`[TMDB Test] Testing anime episode numbering for TMDB ID: ${tmdbId}`);
-  
+
   try {
     const metadata = await fetchTmdbMetadata(tmdbId, 'series', 'en-US', bearerToken);
-    
+
     if (metadata && metadata.videos && metadata.videos.length > 0) {
       console.log(`[TMDB Test] Found ${metadata.videos.length} episodes for ${metadata.name}`);
-      
+
       // Show sample episodes from different seasons
-      const sampleEpisodes = metadata.videos.filter((ep, index) => 
+      const sampleEpisodes = metadata.videos.filter((ep, index) =>
         index < 5 || // First 5 episodes
         (ep.season === 22 && ep.episode <= 50) || // Season 22 episodes 1-50
         ep.episode > 1000 // High numbered episodes
       ).slice(0, 20);
-      
+
       console.log(`[TMDB Test] Sample episodes:`);
       sampleEpisodes.forEach(ep => {
         console.log(`  Season ${ep.season} Episode ${ep.episode}: ${ep.name} (ID: ${ep.id})${ep.absoluteNumber ? ` [Absolute: ${ep.absoluteNumber}]` : ''}`);
       });
-      
+
       // Check for the specific case mentioned in the issue
       const season22Episodes = metadata.videos.filter(ep => ep.season === 22 && ep.episode >= 45 && ep.episode <= 50);
       if (season22Episodes.length > 0) {
@@ -1205,7 +1212,7 @@ async function testAnimeEpisodeNumbering(tmdbId = 37854, bearerToken = null) {
           console.log(`  S22E${ep.episode}: ${ep.name} (ID: ${ep.id})${ep.absoluteNumber ? ` [Absolute: ${ep.absoluteNumber}]` : ''}`);
         });
       }
-      
+
       return metadata;
     } else {
       console.log(`[TMDB Test] No episodes found for series ${tmdbId}`);
@@ -1233,4 +1240,4 @@ module.exports = {
   fetchTmdbGenres,
   clearTmdbCaches,
   testAnimeEpisodeNumbering // Export test function
-}; 
+};
