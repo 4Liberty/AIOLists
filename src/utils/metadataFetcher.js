@@ -261,22 +261,21 @@ async function enrichItemsWithTMDB(items, language = 'en-US', userBearerToken = 
       return await enrichItemsWithCinemeta(items);
     }
 
-    const enrichedItemsWithLogos = await Promise.all(
+const enrichedItemsWithLogos = await Promise.all(
   enrichedItems.map(async (item) => {
     if (item.type === 'series') {
-      // For TV shows, use tvdbId and tmdbId if available
       const tvdbId = item.tvdb_id || undefined;
       const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
       const originalLanguage = item.originalLanguage || 'en';
       return enrichItemWithTvLogo(item, tvdbId, tmdbId, language, originalLanguage);
     } else {
-      // For movies
       const tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
       const originalLanguage = item.originalLanguage || 'en';
       return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
     }
   })
 );
+    
 return enrichedItemsWithLogos;
     
   } catch (error) {
