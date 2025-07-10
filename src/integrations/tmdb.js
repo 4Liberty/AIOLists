@@ -1,15 +1,17 @@
 /**
  * TMDB Integration - OAuth Authentication for User Lists
- * * TMDB API v3 authentication flow:
+ * 
+ * TMDB API v3 authentication flow:
  * 1. Create a request token via /3/authentication/token/new
  * 2. User authorization through TMDB website  
  * 3. Create session ID via /3/authentication/session/new
- * * This allows access to user's watchlists, favorites, and custom lists.
+ * 
+ * This allows access to user's watchlists, favorites, and custom lists.
  */
 
 const axios = require('axios');
 const Cache = require('../utils/cache');
-const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS, TMDB_API_KEY } = require('../config');
+const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS } = require('../config');
 
 // Create a cache instance for TMDB data with 24 hour TTL
 const tmdbCache = new Cache({ defaultTTL: 24 * 3600 * 1000 }); // 24 hours
@@ -177,6 +179,7 @@ async function fetchTmdbLists(userConfig) {
       },
       headers: {
         'accept': 'application/json',
+        'Authorization': `Bearer ${userConfig.tmdbBearerToken || DEFAULT_TMDB_BEARER_TOKEN}`
       },
       timeout: TMDB_REQUEST_TIMEOUT
     });
@@ -499,12 +502,12 @@ async function validateTMDBKey(userBearerToken) {
 }
 
 /**
- * Convert IMDB ID to TMDB ID using TMDB's find endpoint
+ * Convert IMDB ID to TMDB ID using TMDB's find endpoint with user Bearer token
  * @param {string} imdbId - IMDB ID (e.g., "tt1234567")
+ * @param {string} userBearerToken - User's TMDB Read Access Token
  * @returns {Promise<Object|null>} Object with tmdbId and type, or null if not found
  */
-
-async function convertImdbToTmdbId(imdbId) {
+async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!imdbId || !imdbId.match(/^tt\d+$/)) {
     return null;
   }
@@ -518,12 +521,11 @@ async function convertImdbToTmdbId(imdbId) {
   try {
     const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
       params: {
-        external_source: 'imdb_id',
-        api_key: TMDB_API_KEY // Use the v3 API Key as a parameter
+        external_source: 'imdb_id'
       },
       headers: {
-        'accept': 'application/json'
-        // REMOVED the incorrect 'Authorization' header
+        'accept': 'application/json',
+        'Authorization': `Bearer ${userBearerToken}`
       },
       timeout: TMDB_REQUEST_TIMEOUT
     });
@@ -909,7 +911,6 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   const metadata = {
     id: tmdbId,
     imdb_id: imdbId,
-    tvdb_id: tmdbData.external_ids?.tvdb_id,
     type: type,
     name: isMovie ? tmdbData.title : tmdbData.name,
     description: tmdbData.overview || "",
@@ -1232,4 +1233,4 @@ module.exports = {
   fetchTmdbGenres,
   clearTmdbCaches,
   testAnimeEpisodeNumbering // Export test function
-};
+}; 
