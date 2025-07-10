@@ -517,18 +517,16 @@ async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER
   }
   
   try {
-   // src/integrations/tmdb.js -> inside convertImdbToTmdbId
-
-const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
-  params: {
-    external_source: 'imdb_id',
-    api_key: TMDB_API_KEY // Use the v3 API Key as a parameter
-  },
-  headers: {
-    'accept': 'application/json'
-    // REMOVED the incorrect 'Authorization' header
-  },
-  timeout: TMDB_REQUEST_TIMEOUT
+    const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
+      params: {
+        external_source: 'imdb_id',
+        api_key: TMDB_API_KEY // Use the v3 API Key as a parameter
+      },
+      headers: {
+        'accept': 'application/json'
+        // REMOVED the incorrect 'Authorization' header
+      },
+      timeout: TMDB_REQUEST_TIMEOUT
     });
     
     const data = response.data;
