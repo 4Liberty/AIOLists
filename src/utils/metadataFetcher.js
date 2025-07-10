@@ -362,10 +362,7 @@ async function enrichItemsWithCinemeta(items) {
     }
   })
 );
-return enrichedItemsWithLogos;
-    
-  })
-);
+
 return enrichedItemsWithLogos;
     
   } catch (error) {
