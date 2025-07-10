@@ -12,6 +12,7 @@
 const axios = require('axios');
 const Cache = require('../utils/cache');
 const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS } = require('../config');
+const { getLogo, getTvLogo } = require('../utils/getLogo');
 
 // Create a cache instance for TMDB data with 24 hour TTL
 const tmdbCache = new Cache({ defaultTTL: 24 * 3600 * 1000 }); // 24 hours
