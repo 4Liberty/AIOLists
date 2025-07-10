@@ -177,7 +177,6 @@ async function fetchTmdbLists(userConfig) {
       },
       headers: {
         'accept': 'application/json',
-        'Authorization': `Bearer ${userConfig.tmdbBearerToken || DEFAULT_TMDB_BEARER_TOKEN}`
       },
       timeout: TMDB_REQUEST_TIMEOUT
     });
@@ -500,12 +499,12 @@ async function validateTMDBKey(userBearerToken) {
 }
 
 /**
- * Convert IMDB ID to TMDB ID using TMDB's find endpoint with user Bearer token
+ * Convert IMDB ID to TMDB ID using TMDB's find endpoint
  * @param {string} imdbId - IMDB ID (e.g., "tt1234567")
- * @param {string} userBearerToken - User's TMDB Read Access Token
  * @returns {Promise<Object|null>} Object with tmdbId and type, or null if not found
  */
-async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
+
+async function convertImdbToTmdbId(imdbId) {
   if (!imdbId || !imdbId.match(/^tt\d+$/)) {
     return null;
   }
