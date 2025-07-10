@@ -1,4 +1,4 @@
-const { getLogo } = require('src/utils/getLogo'); // Adjust the path if needed
+const { getLogo } = require('./getLogo'); // Adjust the path if needed
 
 // src/utils/metadataFetcher.js
 const axios = require('axios');
