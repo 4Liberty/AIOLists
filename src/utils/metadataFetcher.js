@@ -1,3 +1,5 @@
+const { getLogo } = require('src/utils/getLogo'); // Adjust the path if needed
+
 // src/utils/metadataFetcher.js
 const axios = require('axios');
 const { batchFetchPosters } = require('./posters');
@@ -11,6 +13,19 @@ const {
 
 const CINEMETA_BASE = 'https://v3-cinemeta.strem.io';
 const BATCH_SIZE = METADATA_BATCH_SIZE || 20;
+
+// Helper to enrich an item with a dynamic logo
+async function enrichItemWithLogo(item, tmdbId, language = 'en', originalLanguage = 'en') {
+  try {
+    const logoUrl = await getLogo(tmdbId, language, originalLanguage);
+    if (logoUrl) {
+      return { ...item, logo: logoUrl };
+    }
+  } catch (e) {
+    // Fail silently, fallback to existing logo
+  }
+  return item;
+}
 
 // Helper function to normalize IMDB IDs
 function normalizeImdbId(id) {
@@ -233,7 +248,14 @@ async function enrichItemsWithTMDB(items, language = 'en-US', userBearerToken = 
       return await enrichItemsWithCinemeta(items);
     }
 
-    return enrichedItems;
+    const enrichedItemsWithLogos = await Promise.all(
+  enrichedItems.map(async (item) => {
+    let tmdbId = item.tmdbId || (typeof item.id === 'string' && item.id.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : undefined);
+    const originalLanguage = item.originalLanguage || 'en';
+    return enrichItemWithLogo(item, tmdbId, language, originalLanguage);
+  })
+);
+return enrichedItemsWithLogos;
     
   } catch (error) {
     console.error(`[DEBUG] Error in TMDB enrichment process:`, error.message);
@@ -316,7 +338,15 @@ async function enrichItemsWithCinemeta(items) {
     // Count items with genre information after Cinemeta enrichment
     const itemsWithGenres = enrichedItems.filter(item => item.genres && item.genres.length > 0);
 
-    return enrichedItems;
+    const enrichedItemsWithLogos = await Promise.all(
+  enrichedItems.map(async (item) => {
+    // Try TMDB ID if available, otherwise fallback to imdb_id (getLogo will skip if undefined)
+    let tmdbId = item.tmdbId || undefined;
+    const originalLanguage = item.originalLanguage || 'en';
+    return enrichItemWithLogo(item, tmdbId, 'en', originalLanguage);
+  })
+);
+return enrichedItemsWithLogos;
     
   } catch (error) {
     console.error('Error enriching items with Cinemeta:', error.message);
