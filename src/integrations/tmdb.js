@@ -9,7 +9,7 @@
 
 const axios = require('axios');
 const Cache = require('../utils/cache');
-const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS } = require('../config');
+const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS, TMDB_API_KEY } = require('../config');
 
 // Create a cache instance for TMDB data with 24 hour TTL
 const tmdbCache = new Cache({ defaultTTL: 24 * 3600 * 1000 }); // 24 hours
@@ -517,15 +517,18 @@ async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER
   }
   
   try {
-    const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
-      params: {
-        external_source: 'imdb_id'
-      },
-      headers: {
-        'accept': 'application/json',
-        'Authorization': `Bearer ${userBearerToken}`
-      },
-      timeout: TMDB_REQUEST_TIMEOUT
+   // src/integrations/tmdb.js -> inside convertImdbToTmdbId
+
+const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, {
+  params: {
+    external_source: 'imdb_id',
+    api_key: TMDB_API_KEY // Use the v3 API Key as a parameter
+  },
+  headers: {
+    'accept': 'application/json'
+    // REMOVED the incorrect 'Authorization' header
+  },
+  timeout: TMDB_REQUEST_TIMEOUT
     });
     
     const data = response.data;
