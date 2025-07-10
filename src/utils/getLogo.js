@@ -15,7 +15,7 @@ console.log(`[DEBUG] Read TMDB_API_KEY: ${TMDB_API_KEY ? 'found a key' : 'not fo
 let fanart = null;
 if (FANART_API_KEY) {
   try {
-    fanart = new FanartTvApi({ api_key: FANART_API_KEY });
+    fanart = new FanartTvApi({ apiKey: FANART_API_KEY });
     console.log("Fanart.tv API client initialized successfully.");
   } catch (e) {
     console.error("ERROR: Failed to initialize Fanart.tv API client:", e.message);
