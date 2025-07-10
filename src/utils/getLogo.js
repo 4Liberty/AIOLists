@@ -1,6 +1,6 @@
 require('dotenv').config();
 const FanartTvApi = require("fanart.tv-api");
-const apiKey = process.env.FANART_API;
+const apiKey = process.env.FANART_API_KEY;
 const baseUrl = "http://webservice.fanart.tv/v3/";
 const fanart = new FanartTvApi({ apiKey, baseUrl });
 
