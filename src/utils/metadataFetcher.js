@@ -88,52 +88,59 @@ async function enrichItemsWithMetadata(items, metadataSource = 'cinemeta', hasTm
   return finalEnrichedItems;
 }
 
+// --- START OF CORRECTED LOGIC ---
+
+// This is the main orchestrator for TMDB enrichment.
 async function enrichItemsWithTMDB(items, language, userBearerToken) {
     if (!items || items.length === 0) return items;
 
-    const tmdbEnrichedItems = await fetchAndEnrichFromTmdb(items, language, userBearerToken);
+    // fetchAndEnrichFromTmdb now returns a Map of successfully fetched items.
+    const successfullyEnrichedMap = await fetchAndEnrichFromTmdb(items, language, userBearerToken);
 
-    const successfulItems = new Map();
     const failedItems = [];
+    const finalResults = [];
 
-    tmdbEnrichedItems.forEach(item => {
-        const imdbId = normalizeImdbId(item.id || item.imdb_id);
-        if (imdbId && (item.name || item.title) && item.tmdbId) {
-            successfulItems.set(imdbId, item);
-        } else if (imdbId) {
-            const originalItem = items.find(orig => normalizeImdbId(orig.id || orig.imdb_id) === imdbId);
-            failedItems.push(originalItem || item);
-        } else if (item.id && item.id.startsWith('tmdb:')) {
-            // Handle items that only have a TMDB ID and were successfully fetched
-            if ((item.name || item.title) && item.tmdbId) {
-                successfulItems.set(item.id, item);
-            } else {
-                failedItems.push(item);
-            }
+    // Iterate through the original items to maintain order.
+    for (const originalItem of items) {
+        const imdbId = normalizeImdbId(originalItem.id || originalItem.imdb_id);
+        const tmdbId = originalItem.id?.startsWith('tmdb:') ? originalItem.id : null;
+        const primaryId = imdbId || tmdbId;
+
+        if (primaryId && successfullyEnrichedMap.has(primaryId)) {
+            // Success! Use the high-quality TMDB result.
+            finalResults.push(successfullyEnrichedMap.get(primaryId));
+        } else {
+            // Failure, this item needs to be fetched from Cinemeta.
+            failedItems.push(originalItem);
         }
-    });
-
-    let cinemetaFallbacks = [];
-    if (failedItems.length > 0) {
-        console.log(`[TMDB Fallback] ${failedItems.length} items failed TMDB enrichment. Falling back to Cinemeta for those items.`);
-        cinemetaFallbacks = await enrichItemsWithCinemeta(failedItems);
     }
 
-    const finalResults = items.map(originalItem => {
-        const imdbId = normalizeImdbId(originalItem.id || originalItem.imdb_id);
-        const primaryId = imdbId || originalItem.id;
+    // If there were any failures, fetch them from Cinemeta.
+    if (failedItems.length > 0) {
+        console.log(`[TMDB Fallback] ${failedItems.length} items failed TMDB enrichment. Falling back to Cinemeta for those items.`);
+        const cinemetaFallbacks = await enrichItemsWithCinemeta(failedItems);
+        const cinemetaMap = new Map(cinemetaFallbacks.map(item => [normalizeImdbId(item.id || item.imdb_id) || item.id, item]));
 
-        if (successfulItems.has(primaryId)) {
-            return successfulItems.get(primaryId);
+        // Re-integrate the Cinemeta fallbacks into the final results list, maintaining original order.
+        let failedIndex = 0;
+        for (let i = 0; i < items.length; i++) {
+            const originalItem = items[i];
+            const primaryId = normalizeImdbId(originalItem.id || originalItem.imdb_id) || originalItem.id;
+            
+            // If the item was not in the success map, it must be a failed item.
+            if (!successfullyEnrichedMap.has(primaryId)) {
+                const fallbackData = cinemetaMap.get(primaryId);
+                // Insert the fallback data at the correct position.
+                finalResults.splice(i, 0, fallbackData || originalItem);
+                failedIndex++;
+            }
         }
-        
-        const fallback = cinemetaFallbacks.find(fb => (normalizeImdbId(fb.id || fb.imdb_id) === primaryId) || (fb.id === primaryId));
-        return fallback || originalItem;
-    });
+    }
 
     return finalResults;
 }
 
+// This helper function now only returns successful fetches.
 async function fetchAndEnrichFromTmdb(items, language, userBearerToken) {
     const itemsToProcess = items.map(item => {
         const imdbId = normalizeImdbId(item.imdb_id || item.id);
@@ -165,29 +172,35 @@ async function fetchAndEnrichFromTmdb(items, language, userBearerToken) {
         });
     }
 
-    if (readyForFetch.length === 0) return items;
+    if (readyForFetch.length === 0) return new Map();
 
     const uniqueItemsToFetch = Array.from(new Map(readyForFetch.map(item => [item.tmdbId, item])).values());
     const tmdbMetadataMap = await batchFetchTmdbMetadata(uniqueItemsToFetch, language, userBearerToken);
 
-    return items.map(originalItem => {
+    // Instead of returning a mixed array, return a map of successes.
+    const successMap = new Map();
+    items.forEach(originalItem => {
         const originalImdbId = normalizeImdbId(originalItem.id || originalItem.imdb_id);
         const originalTmdbId = originalItem.id?.startsWith('tmdb:') ? originalItem.id.replace('tmdb:', '') : originalItem.tmdbId;
 
-        let fetchedMeta = null;
-        if (originalImdbId && tmdbMetadataMap[originalImdbId]) {
-            fetchedMeta = tmdbMetadataMap[originalImdbId];
-        } else if (originalTmdbId && tmdbMetadataMap[`tmdb:${originalTmdbId}`]) {
-            fetchedMeta = tmdbMetadataMap[`tmdb:${originalTmdbId}`];
-        }
+        // The key in tmdbMetadataMap can be either 'tt...' or 'tmdb:...'
+        const fetchedMeta = tmdbMetadataMap[originalImdbId] || tmdbMetadataMap[`tmdb:${originalTmdbId}`];
         
         if (fetchedMeta) {
-            const finalId = originalItem.id;
-            return { ...originalItem, ...fetchedMeta, id: finalId };
+            // A fetch is successful if we get a name/title.
+            if (fetchedMeta.name || fetchedMeta.title) {
+                const finalId = originalItem.id || fetchedMeta.id;
+                const enrichedItem = { ...originalItem, ...fetchedMeta, id: finalId };
+                const primaryId = normalizeImdbId(finalId) || finalId;
+                successMap.set(primaryId, enrichedItem);
+            }
         }
-        return originalItem;
     });
+
+    return successMap;
 }
+
+// --- END OF CORRECTED LOGIC ---
 
 async function enrichItemsWithCinemeta(items) {
   if (!items || items.length === 0) return [];
