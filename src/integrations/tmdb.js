@@ -376,7 +376,7 @@ async function processListItems(items, userConfig, genre) {
       release_date: item.release_date,
       first_air_date: item.first_air_date,
       poster: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : undefined,
-      background: item.backdrop_path ? `https://image.tmdb.org/t/p/w1280${item.backdrop_path}` : undefined,
+      background: item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : undefined,
       poster_path: item.poster_path,
       backdrop_path: item.backdrop_path,
       vote_average: item.vote_average,
@@ -728,7 +728,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   // Use tmdb: format for ID, preserve IMDB ID separately
   const tmdbId = `tmdb:${tmdbData.id}`;
   const imdbId = tmdbData.external_ids?.imdb_id || tmdbData.imdb_id;
-  const tvdbId = tmdbData.external_ids?.tvdb_id; // <<<====== THIS IS THE FIX
+  const tvdbId = tmdbData.external_ids?.tvdb_id;
   
   // Extract cast and crew
   const cast = tmdbData.credits?.cast?.slice(0, 10).map(person => person.name) || [];
@@ -918,12 +918,12 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   const metadata = {
     id: tmdbId,
     imdb_id: imdbId,
-    tvdb_id: tvdbId, // <<<====== THIS IS THE FIX
+    tvdb_id: tvdbId,
     type: type,
     name: isMovie ? tmdbData.title : tmdbData.name,
     description: tmdbData.overview || "",
     poster: tmdbData.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbData.poster_path}` : undefined,
-    background: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}` : undefined,
+    background: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/original${tmdbData.backdrop_path}` : undefined,
     releaseInfo: formattedReleaseInfo,
     year: formattedYear,
     released: releasedFormatted,
@@ -941,7 +941,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
       (tmdbData.origin_country?.[0] || 'Unknown'),
     trailers: trailers.length > 0 ? trailerVideos.map(video => ({ source: video.key, type: 'Trailer' })) : undefined,
     trailerStreams: trailerStreams.length > 0 ? trailerStreams : undefined,
-    videos: videos, // Cinemeta compatibility - empty array for now
+    videos: videos,
     status: !isMovie ? tmdbData.status : undefined,
     tmdbId: tmdbData.id,
     moviedb_id: tmdbData.id, // Cinemeta compatibility
@@ -1241,4 +1241,4 @@ module.exports = {
   fetchTmdbGenres,
   clearTmdbCaches,
   testAnimeEpisodeNumbering // Export test function
-}; 
+};
