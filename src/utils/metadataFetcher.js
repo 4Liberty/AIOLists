@@ -1,12 +1,7 @@
 // src/utils/metadataFetcher.js
-const axios = require('axios');
 const { batchFetchPosters } = require('./posters');
-const { METADATA_BATCH_SIZE } = require('../config');
 const { getMovieFanart, getSeriesFanart } = require('./getFanartImages');
 const { batchConvertImdbToTmdbIds, batchFetchTmdbMetadata } = require('../integrations/tmdb');
-
-const CINEMETA_BASE = 'https://v3-cinemeta.strem.io';
-const BATCH_SIZE = METADATA_BATCH_SIZE || 50;
 
 function normalizeImdbId(id) {
   if (!id) return null;
@@ -15,6 +10,7 @@ function normalizeImdbId(id) {
   return null;
 }
 
+// This is the primary function for enriching items with metadata.
 async function enrichItemsWithMetadata(items, userConfig) {
   const { metadataSource, tmdbSessionId, tmdbAccountId, tmdbLanguage, tmdbBearerToken, rpdbApiKey } = userConfig;
   
@@ -25,15 +21,19 @@ async function enrichItemsWithMetadata(items, userConfig) {
   let baseEnrichedItems;
   const hasTmdbAccess = (tmdbSessionId && tmdbAccountId) || tmdbBearerToken;
 
+  // Step 1: Get base metadata ONLY from TMDB. Cinemeta is no longer an option.
   if (metadataSource === 'tmdb' && hasTmdbAccess) {
     baseEnrichedItems = await enrichItemsWithTMDB(items, tmdbLanguage, tmdbBearerToken, userConfig);
   } else {
-    baseEnrichedItems = await enrichItemsWithCinemeta(items);
+    // If TMDB is not the source or not configured, return the items with no enrichment.
+    console.warn('TMDB not configured as metadata source. Skipping enrichment.');
+    return items;
   }
 
-  const finalEnrichedItems = await Promise.all(
+  // Step 2: Apply image fallbacks (Logos, Wallpapers).
+  const itemsWithImages = await Promise.all(
     baseEnrichedItems.map(async (item) => {
-      if (!item.imdb_id && !item.tmdbId) return item;
+      if (!item.tmdbId) return item; // Cannot fetch fanart without TMDB ID
 
       let fanartImages = {};
       if (item.type === 'movie') {
@@ -42,19 +42,21 @@ async function enrichItemsWithMetadata(items, userConfig) {
         fanartImages = await getSeriesFanart(item.tvdb_id, item.tmdbId, tmdbLanguage, item.original_language);
       }
 
+      // --- Image Fallback Logic ---
       item.logo = fanartImages.logo || item.tmdb_logo || item.logo;
-      item.background = fanartImages.background || item.background;
+      item.background = item.background || fanartImages.background;
       item.poster = fanartImages.poster || item.poster;
 
       return item;
     })
   );
 
+  // Step 3: Apply RPDB posters (highest priority).
   if (rpdbApiKey) {
-    const imdbIds = finalEnrichedItems.map(item => item.imdb_id).filter(Boolean);
+    const imdbIds = itemsWithImages.map(item => item.imdb_id).filter(Boolean);
     if (imdbIds.length > 0) {
       const posterMap = await batchFetchPosters(imdbIds, rpdbApiKey, tmdbLanguage);
-      finalEnrichedItems.forEach(item => {
+      itemsWithImages.forEach(item => {
         if (item.imdb_id && posterMap[item.imdb_id]) {
           item.poster = posterMap[item.imdb_id];
         }
@@ -62,28 +64,29 @@ async function enrichItemsWithMetadata(items, userConfig) {
     }
   }
 
-  return finalEnrichedItems;
+  return itemsWithImages;
 }
 
+// This function now exclusively fetches from TMDB.
 async function enrichItemsWithTMDB(items, language, userBearerToken, userConfig) {
-  if (!items || items.length === 0) return items;
+    if (!items || items.length === 0) return items;
 
-  const enrichedItems = await fetchAndEnrichFromTmdb(items, language, userBearerToken, userConfig);
-  
-  return enrichedItems;
-}
-
-async function fetchAndEnrichFromTmdb(items, language, userBearerToken, userConfig) {
-    const itemsToProcess = items.map(item => ({
-        imdbId: normalizeImdbId(item.imdb_id || item.id),
-        tmdbId: item.id?.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : item.tmdbId,
-        type: item.type,
-        originalItem: item
-    }));
+    // Prepare items for fetching by resolving their TMDB IDs.
+    const itemsToProcess = items.map(item => {
+        const imdbId = normalizeImdbId(item.imdb_id || item.id);
+        const tmdbIdFromId = item.id?.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : null;
+        return {
+            imdbId: imdbId,
+            tmdbId: item.tmdbId || tmdbIdFromId,
+            type: item.type,
+            originalItem: item
+        };
+    });
 
     const needsConversion = itemsToProcess.filter(item => item.imdbId && !item.tmdbId);
     let readyForFetch = itemsToProcess.filter(item => item.tmdbId);
 
+    // Convert any items that only have an IMDb ID.
     if (needsConversion.length > 0) {
         const imdbIdsToConvert = needsConversion.map(item => item.imdbId);
         const conversionMap = await batchConvertImdbToTmdbIds(imdbIdsToConvert, userBearerToken);
@@ -100,69 +103,27 @@ async function fetchAndEnrichFromTmdb(items, language, userBearerToken, userConf
         });
     }
 
-    if (readyForFetch.length === 0) return items;
+    if (readyForFetch.length === 0) {
+        return items;
+    }
 
+    // Fetch full metadata from TMDB for all resolvable items.
     const uniqueItemsToFetch = Array.from(new Map(readyForFetch.map(item => [item.tmdbId, item])).values());
     const tmdbMetadataMap = await batchFetchTmdbMetadata(uniqueItemsToFetch, language, userBearerToken);
 
+    // Merge the results. If an item failed to fetch, the original item data is preserved.
     return items.map(originalItem => {
         const processedItem = readyForFetch.find(p => p.originalItem === originalItem);
         const fetchedMeta = processedItem ? tmdbMetadataMap[processedItem.tmdbId] : null;
 
         if (fetchedMeta) {
-            // CRITICAL FIX: Ensure the final ID is the TMDB ID for routing.
-            // The imdb_id is preserved for other uses (like RPDB).
             fetchedMeta.id = `tmdb:${fetchedMeta.tmdbId}`;
             return { ...originalItem, ...fetchedMeta };
         }
         
+        // If TMDB fetch failed, return the original item. NO FALLBACK.
         return originalItem;
     });
-}
-
-
-async function enrichItemsWithCinemeta(items) {
-  if (!items || items.length === 0) return [];
-  const processedItems = items.map((item, index) => ({
-    originalIndex: index,
-    imdbId: normalizeImdbId(item.imdb_id || item.id),
-    originalItem: item
-  }));
-
-  const movieItems = processedItems.filter(item => item.originalItem.type === 'movie' && item.imdbId);
-  const seriesItems = processedItems.filter(item => item.originalItem.type === 'series' && item.imdbId);
-  
-  const [movieMetadata, seriesMetadata] = await Promise.all([
-    fetchCinemetaBatched(movieItems.map(item => item.imdbId), 'movie'),
-    fetchCinemetaBatched(seriesItems.map(item => item.imdbId), 'series')
-  ]);
-
-  const allMetadata = { ...movieMetadata, ...seriesMetadata };
-
-  return items.map((originalItem, index) => {
-    const processedItem = processedItems[index];
-    if (processedItem.imdbId && allMetadata[processedItem.imdbId]) {
-      const metadata = allMetadata[processedItem.imdbId];
-      return { ...originalItem, ...metadata, id: processedItem.imdbId, imdb_id: processedItem.imdbId, type: originalItem.type };
-    }
-    return originalItem;
-  });
-}
-
-async function fetchCinemetaBatched(imdbIds, type) {
-  if (!imdbIds || imdbIds.length === 0) return {};
-  const allMetadata = {};
-  const CINEMETA_BATCH_SIZE = BATCH_SIZE;
-  for (let i = 0; i < imdbIds.length; i += CINEMETA_BATCH_SIZE) {
-    const batch = imdbIds.slice(i, i + CINEMETA_BATCH_SIZE);
-    try {
-      const batchMetadata = await fetchCinemetaChunk(batch, type);
-      Object.assign(allMetadata, batchMetadata);
-    } catch (error) {
-      console.error(`[METADATA PERF] Cinemeta batch failed:`, error.message);
-    }
-  }
-  return allMetadata;
 }
 
 module.exports = { enrichItemsWithMetadata };
