@@ -115,16 +115,10 @@ async function enrichItemsWithTMDB(items, language, userBearerToken, userConfig)
     return items.map(originalItem => {
         const processedItem = readyForFetch.find(p => p.originalItem === originalItem);
         const fetchedMeta = processedItem ? tmdbMetadataMap[processedItem.tmdbId] : null;
-
-        if (fetchedMeta) {
-            fetchedMeta.id = `tmdb:${fetchedMeta.tmdbId}`;
-            return { ...originalItem, ...fetchedMeta };
-        }
         
         // If TMDB fetch failed, return the original item. NO FALLBACK.
-        return originalItem;
+      
     });
 }
 
 module.exports = { enrichItemsWithMetadata };
-
