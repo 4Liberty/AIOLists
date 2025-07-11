@@ -1,15 +1,15 @@
 // src/config/index.js
-const ITEMS_PER_PAGE = 20;
+const ITEMS_PER_PAGE = 50; // Increased from 20
 const PORT = process.env.PORT || 7000;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-// Performance optimization constants
-const METADATA_BATCH_SIZE = 20; // Increased from default 10
-const POSTER_BATCH_SIZE = 20; // Increased from default 25
-const TRAKT_CONCURRENT_REQUESTS = 8; // Increased concurrency
-const TMDB_CONCURRENT_REQUESTS = 20; // Increased concurrency for better performance
-const MDB_LIST_CONCURRENT_REQUESTS = 5; // New batch setting
-const MANIFEST_GENERATION_CONCURRENCY = 5; // Parallel list processing during manifest generation
+// Performance optimization constants - AGGRESSIVE SETTINGS FOR SINGLE USER
+const METADATA_BATCH_SIZE = 50; // Increased from 20
+const POSTER_BATCH_SIZE = 50; // Increased from 20
+const TRAKT_CONCURRENT_REQUESTS = 25; // Increased from 8
+const TMDB_CONCURRENT_REQUESTS = 40; // Increased from 20 (TMDB API is very fast)
+const MDB_LIST_CONCURRENT_REQUESTS = 20; // Increased from 5
+const MANIFEST_GENERATION_CONCURRENCY = 20; // Increased from 5
 const ENABLE_MANIFEST_CACHE = true; // Cache manifest to avoid repeated processing
 
 // Environment variable configuration with defaults
