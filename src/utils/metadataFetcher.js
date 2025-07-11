@@ -111,11 +111,13 @@ async function enrichItemsWithTMDB(items, language, userBearerToken) {
     // Separate successful results from failures
     tmdbEnrichedItems.forEach(item => {
         const imdbId = normalizeImdbId(item.id || item.imdb_id);
-        // An item is considered successful if it has a description (overview), which indicates full TMDB data was fetched.
-        if (imdbId && item.description) {
+        
+        // A fetch is successful if we got a name/title and it has a tmdbId.
+        // This prevents falling back to Cinemeta just because a translation is missing.
+        if (imdbId && (item.name || item.title) && item.tmdbId) {
             successfulItems.set(imdbId, item);
         } else if (imdbId) {
-            // Keep the original item data for fallback
+            // If the fetch failed, keep the original item data for the fallback process.
             const originalItem = items.find(orig => normalizeImdbId(orig.id || orig.imdb_id) === imdbId);
             failedItems.push(originalItem || item);
         }
