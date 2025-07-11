@@ -412,9 +412,6 @@ module.exports = function(router) {
           let searchResults;
 
           if (catalogId === 'aiolists_merged_search') {
-            // Merged search using TMDB multi search
-    
-            
             searchResults = await searchContent({
               query: searchQuery.trim(),
               type: 'search', // Use search type for merged search
@@ -423,9 +420,6 @@ module.exports = function(router) {
               userConfig: req.userConfig
             });
           } else if (catalogId === 'aiolists_anime_search') {
-            // Anime search using Kitsu API
-    
-            
             searchResults = await searchContent({
               query: searchQuery.trim(),
               type: 'anime', // Use anime type for anime search
@@ -435,8 +429,6 @@ module.exports = function(router) {
             });
           } else {
             // Traditional movie/series search
-    
-            
             // Determine search sources based on user configuration
             const userSearchSources = req.userConfig.searchSources || [];
             let sources = [];
@@ -454,7 +446,6 @@ module.exports = function(router) {
             
             // If no valid sources are configured, return empty results
             if (sources.length === 0) {
-      
               return res.json({ metas: [] });
             }
             
@@ -474,131 +465,21 @@ module.exports = function(router) {
           let filteredMetas = searchResults.results || [];
           
           // Filter by type if specified (only for traditional search)
-          if (catalogId === 'aiolists_search' && catalogType && catalogType !== 'all' && catalogType !== 'search') {
-            filteredMetas = filteredMetas.filter(result => result.type === catalogType);
+          if ((catalogId === 'aiolists_search_movies' || catalogId === 'aiolists_search_series') && type && type !== 'all' && type !== 'search') {
+            filteredMetas = filteredMetas.filter(result => result.type === type);
           }
 
           // Filter by genre if specified
           if (genre && genre !== 'All') {
-            const beforeFilter = filteredMetas.length;
             filteredMetas = filteredMetas.filter(result => {
               if (!result.genres) return false;
               const itemGenres = Array.isArray(result.genres) ? result.genres : [result.genres];
               return itemGenres.some(g => 
-                String(g).toLowerCase() === String(genre).toLowerCase()
-              );
-            });
-    
-          }
-
-          return res.json({ 
-            metas: filteredMetas,
-            cacheMaxAge: 300 // 5 minutes cache for search results
-          });
-
-        } catch (error) {
-          console.error(`[API Search] Error in search catalog "${catalogId}" for "${searchQuery}":`, error);
-          return res.json({ metas: [] });
-        }
-      }
-
-      const listSource = catalogId === 'random_mdblist_catalog' ? 'random_mdblist' :
-                         catalogId.startsWith('aiolists-') ? 'mdblist_native' :
-                         catalogId.startsWith('trakt_') && !catalogId.startsWith('traktpublic_') ? 'trakt_native' :
-                         catalogId.startsWith('mdblisturl_') ? 'mdblist_url' :
-                         catalogId.startsWith('traktpublic_') ? 'trakt_public' :
-                         'external_addon';
-  
-      if (listSource === 'trakt_native') {
-        await initTraktApi(req.userConfig);
-      }
-
-      // Check for MDBList API key requirements
-      if ((listSource === 'mdblist_native' || listSource === 'random_mdblist') && !req.userConfig.apiKey) {
-          return res.json({ metas: [] });
-      }
-      
-      // Special handling for MDBList URL imports - allow if they have public access info
-      if (listSource === 'mdblist_url' && !req.userConfig.apiKey) {
-          const addonConfig = req.userConfig.importedAddons?.[catalogId];
-          const hasPublicAccess = addonConfig && addonConfig.mdblistUsername && addonConfig.mdblistSlug;
-          if (!hasPublicAccess) {
-              return res.json({ metas: [] });
-          }
-      }
-      if (listSource === 'trakt_native' && !req.userConfig.traktAccessToken) {
-          return res.json({ metas: [] });
-      }
-  
-      if (catalogId === 'random_mdblist_catalog' || commonIsWatchlist(catalogId)) {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      } else {
-        setCacheHeaders(res, catalogId);
-      }
-  
-      const itemsResult = await fetchListContent(catalogId, req.userConfig, skip, genre, catalogType);
-  
-      if (!itemsResult) {
-        return res.json({ metas: [] });
-      }
-
-      // Enrich items with metadata based on user's metadata source preference
-      let enrichedResult = itemsResult;
-      if (itemsResult.allItems && itemsResult.allItems.length > 0) {
-        const metadataSource = req.userConfig.metadataSource || 'cinemeta';
-        const hasTmdbOAuth = !!(req.userConfig.tmdbSessionId && req.userConfig.tmdbAccountId);
-        const tmdbLanguage = req.userConfig.tmdbLanguage || 'en-US';
-        const tmdbBearerToken = req.userConfig.tmdbBearerToken;
-        
-        const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
-        const enrichedItems = await enrichItemsWithMetadata(
-          itemsResult.allItems, 
-          metadataSource, 
-          hasTmdbOAuth, 
-          tmdbLanguage, 
-          tmdbBearerToken
-        );
-        
-        // Update the items result with enriched items
-        enrichedResult = {
-          ...itemsResult,
-          allItems: enrichedItems
-        };
-      }
-  
-      // Create metadata config for converter
-      const metadataConfig = {
-        metadataSource: req.userConfig.metadataSource || 'cinemeta',
-        tmdbLanguage: req.userConfig.tmdbLanguage || 'en-US'
-      };
-
-      let metas = await convertToStremioFormat(enrichedResult, req.userConfig.rpdbApiKey, metadataConfig);  
-      
-      // Apply type filtering
-      if (catalogType === 'movie' || catalogType === 'series') {
-          metas = metas.filter(meta => meta.type === catalogType);
-      }
-      
-      // Apply genre filtering after enrichment (since we removed it from integration layer)
-      if (genre && genre !== 'All' && metas.length > 0) {
-          const beforeFilterCount = metas.length;
-          metas = metas.filter(meta => {
-              if (!meta.genres) return false;
-              const itemGenres = Array.isArray(meta.genres) ? itemGenres : [result.genres];
-              return itemGenres.some(g => 
                   String(g).toLowerCase() === String(genre).toLowerCase()
               );
-          });
-    
+            });
           }
-
-          return res.json({ 
-            metas: filteredMetas,
-            cacheMaxAge: 300 // 5 minutes cache for search results
-          });
-
+          return res.json({ metas: filteredMetas, cacheMaxAge: 300 });
         } catch (error) {
           console.error(`[API Search] Error in search catalog "${catalogId}" for "${searchQuery}":`, error);
           return res.json({ metas: [] });
@@ -686,7 +567,6 @@ module.exports = function(router) {
       
       // Apply genre filtering after enrichment (since we removed it from integration layer)
       if (genre && genre !== 'All' && metas.length > 0) {
-          const beforeFilterCount = metas.length;
           metas = metas.filter(meta => {
               if (!meta.genres) return false;
               const itemGenres = Array.isArray(meta.genres) ? meta.genres : [meta.genres];
