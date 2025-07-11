@@ -98,6 +98,10 @@ async function enrichItemsWithMetadata(items, userConfig) {
 async function enrichItemsWithTMDB(items, language, userBearerToken, userConfig) {
     if (!items || items.length === 0) return items;
 
+    // --- DISABLED CINEMETA FALLBACK LOGIC ---
+    // The Cinemeta fallback has been disabled by simplifying this function.
+    // The addon will now only use TMDB when it is the selected metadata source.
+
     // This helper function will now correctly fetch and merge the data.
     const enrichedItems = await fetchAndEnrichFromTmdb(items, language, userBearerToken, userConfig);
 
