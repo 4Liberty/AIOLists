@@ -586,6 +586,109 @@ module.exports = function(router) {
           const beforeFilterCount = metas.length;
           metas = metas.filter(meta => {
               if (!meta.genres) return false;
+              const itemGenres = Array.isArray(meta.genres) ? itemGenres : [result.genres];
+              return itemGenres.some(g => 
+                  String(g).toLowerCase() === String(genre).toLowerCase()
+              );
+          });
+    
+          }
+
+          return res.json({ 
+            metas: filteredMetas,
+            cacheMaxAge: 300 // 5 minutes cache for search results
+          });
+
+        } catch (error) {
+          console.error(`[API Search] Error in search catalog "${catalogId}" for "${searchQuery}":`, error);
+          return res.json({ metas: [] });
+        }
+      }
+
+      const listSource = catalogId === 'random_mdblist_catalog' ? 'random_mdblist' :
+                         catalogId.startsWith('aiolists-') ? 'mdblist_native' :
+                         catalogId.startsWith('trakt_') && !catalogId.startsWith('traktpublic_') ? 'trakt_native' :
+                         catalogId.startsWith('mdblisturl_') ? 'mdblist_url' :
+                         catalogId.startsWith('traktpublic_') ? 'trakt_public' :
+                         'external_addon';
+  
+      if (listSource === 'trakt_native') {
+        await initTraktApi(req.userConfig);
+      }
+
+      // Check for MDBList API key requirements
+      if ((listSource === 'mdblist_native' || listSource === 'random_mdblist') && !req.userConfig.apiKey) {
+          return res.json({ metas: [] });
+      }
+      
+      // Special handling for MDBList URL imports - allow if they have public access info
+      if (listSource === 'mdblist_url' && !req.userConfig.apiKey) {
+          const addonConfig = req.userConfig.importedAddons?.[catalogId];
+          const hasPublicAccess = addonConfig && addonConfig.mdblistUsername && addonConfig.mdblistSlug;
+          if (!hasPublicAccess) {
+              return res.json({ metas: [] });
+          }
+      }
+      if (listSource === 'trakt_native' && !req.userConfig.traktAccessToken) {
+          return res.json({ metas: [] });
+      }
+  
+      if (catalogId === 'random_mdblist_catalog' || commonIsWatchlist(catalogId)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else {
+        setCacheHeaders(res, catalogId);
+      }
+  
+      const itemsResult = await fetchListContent(catalogId, req.userConfig, skip, genre, catalogType);
+  
+      if (!itemsResult) {
+        return res.json({ metas: [] });
+      }
+
+      // Enrich items with metadata based on user's metadata source preference
+      let enrichedResult = itemsResult;
+      if (itemsResult.allItems && itemsResult.allItems.length > 0) {
+        const metadataSource = req.userConfig.metadataSource || 'cinemeta';
+        const hasTmdbOAuth = !!(req.userConfig.tmdbSessionId && req.userConfig.tmdbAccountId);
+        const tmdbLanguage = req.userConfig.tmdbLanguage || 'en-US';
+        const tmdbBearerToken = req.userConfig.tmdbBearerToken;
+        
+        const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
+        const enrichedItems = await enrichItemsWithMetadata(
+          itemsResult.allItems, 
+          metadataSource, 
+          hasTmdbOAuth, 
+          tmdbLanguage, 
+          tmdbBearerToken
+        );
+        
+        // Update the items result with enriched items
+        enrichedResult = {
+          ...itemsResult,
+          allItems: enrichedItems
+        };
+      }
+  
+      // Create metadata config for converter
+      const metadataConfig = {
+        metadataSource: req.userConfig.metadataSource || 'cinemeta',
+        tmdbLanguage: req.userConfig.tmdbLanguage || 'en-US'
+      };
+
+      let metas = await convertToStremioFormat(enrichedResult, req.userConfig.rpdbApiKey, metadataConfig);  
+      
+      // Apply type filtering
+      if (catalogType === 'movie' || catalogType === 'series') {
+          metas = metas.filter(meta => meta.type === catalogType);
+      }
+      
+      // Apply genre filtering after enrichment (since we removed it from integration layer)
+      if (genre && genre !== 'All' && metas.length > 0) {
+          const beforeFilterCount = metas.length;
+          metas = metas.filter(meta => {
+              if (!meta.genres) return false;
               const itemGenres = Array.isArray(meta.genres) ? meta.genres : [meta.genres];
               return itemGenres.some(g => 
                   String(g).toLowerCase() === String(genre).toLowerCase()
@@ -2096,13 +2199,15 @@ module.exports = function(router) {
     try {
       let genres = staticGenres;
       
-      // Use TMDB genres if TMDB is selected and Bearer Token is available
-      if (req.userConfig.metadataSource === 'tmdb' && req.userConfig.tmdbLanguage) {
-        const tmdbBearerToken = req.userConfig.tmdbBearerToken || TMDB_BEARER_TOKEN;
-        if (tmdbBearerToken) {
+      // Use TMDB genres if any TMDB connection/token is available
+      const hasTmdbAccessForGenres = !!(req.userConfig.tmdbSessionId || req.userConfig.tmdbAccountId || req.userConfig.tmdbBearerToken || TMDB_BEARER_TOKEN);
+      if (hasTmdbAccessForGenres) {
+        const tmdbBearerTokenToUse = req.userConfig.tmdbBearerToken || TMDB_BEARER_TOKEN;
+        if (tmdbBearerTokenToUse) {
           try {
             const { fetchTmdbGenres } = require('../integrations/tmdb');
-            const tmdbGenres = await fetchTmdbGenres(req.userConfig.tmdbLanguage, tmdbBearerToken);
+            // Use user's preferred language, fallback to 'en-US' if not set
+            const tmdbGenres = await fetchTmdbGenres(req.userConfig.tmdbLanguage || 'en-US', tmdbBearerTokenToUse);
             if (tmdbGenres.length > 0) {
               genres = tmdbGenres;
             }
