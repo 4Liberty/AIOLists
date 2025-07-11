@@ -12,6 +12,11 @@ const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
 const manifestCache = new Map();
 const MANIFEST_CACHE_TTL = 5 * 60 * 1000;
 
+// Helper function to get the display name for a catalog in the manifest
+function getManifestCatalogName(catalogId, defaultName, customNames) {
+  return customNames[String(catalogId)] || defaultName;
+}
+
 function getManifestCacheKey(userConfig) {
   const cacheableConfig = {
     apiKey: !!userConfig.apiKey,
@@ -312,7 +317,11 @@ async function createAddon(userConfig) {
           filteredMetas = filteredMetas.filter(result => result.type === type);
         }
         if (genre && genre !== 'All') {
-          filteredMetas = filteredMetas.filter(result => result.genres?.some(g => String(g).toLowerCase() === String(genre).toLowerCase()));
+          filteredMetas = filteredMetas.filter(result => {
+            if (!result.genres) return false;
+            const itemGenres = Array.isArray(result.genres) ? result.genres : [result.genres];
+            return itemGenres.some(g => String(g).toLowerCase() === String(genre).toLowerCase());
+          });
         }
         return Promise.resolve({ metas: filteredMetas, cacheMaxAge: 300 });
       } catch (error) {
