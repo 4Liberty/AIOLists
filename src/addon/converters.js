@@ -36,6 +36,7 @@ async function convertToStremioFormat(listContent, rpdbApiKey = null, metadataCo
             name: item.name || item.title || `Untitled ${item.type}`,
             poster: item.poster,
             background: item.background || item.backdrop,
+            logo: item.logo, // <<<====== THIS IS THE CRUCIAL ADDITION
             description: item.description || item.overview,
             releaseInfo: item.releaseInfo || item.year || item.release_year || 
                          (item.release_date ? item.release_date.split('-')[0] : 
@@ -79,6 +80,7 @@ async function convertToStremioFormat(listContent, rpdbApiKey = null, metadataCo
         name: movie.name || movie.title || 'Untitled Movie',
         poster: movie.poster,
         background: movie.background || movie.backdrop,
+        logo: movie.logo, // Also added here for consistency
         description: movie.description || movie.overview,
         releaseInfo: movie.releaseInfo || movie.year || movie.release_year || (movie.release_date ? movie.release_date.split('-')[0] : undefined),
         imdbRating: movie.imdbRating || (movie.imdbrating ? (typeof movie.imdbrating === 'number' ? movie.imdbrating.toFixed(1) : movie.imdbrating) : undefined),
@@ -112,6 +114,7 @@ async function convertToStremioFormat(listContent, rpdbApiKey = null, metadataCo
         name: show.name || show.title || 'Untitled Series',
         poster: show.poster,
         background: show.background || show.backdrop,
+        logo: show.logo, // And here
         description: show.description || show.overview,
         releaseInfo: show.releaseInfo || show.year || show.release_year || (show.first_air_date ? show.first_air_date.split('-')[0] : undefined),
         imdbRating: show.imdbRating || (show.imdbrating ? (typeof show.imdbrating === 'number' ? show.imdbrating.toFixed(1) : show.imdbrating) : undefined),
