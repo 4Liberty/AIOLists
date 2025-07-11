@@ -10,6 +10,51 @@ const TMDB_BASE_URL_V3 = 'https://api.themoviedb.org/3';
 const TMDB_REQUEST_TIMEOUT = 15000;
 const DEFAULT_TMDB_BEARER_TOKEN = TMDB_BEARER_TOKEN;
 
+async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
+  if (!items?.length) return {};
+  
+  const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 12;
+  const results = {};
+  
+  const processChunk = async (chunk) => {
+    const chunkPromises = chunk.map(async (item) => {
+      // FIX: The identifier for the map should be the TMDB ID, not the IMDb ID.
+      const identifier = item.tmdbId; 
+      try {
+        const metadata = await fetchTmdbMetadata(item.tmdbId, item.type, language, userBearerToken);
+        if (metadata) {
+          // Preserve the original IMDb ID if it exists from the conversion step.
+          metadata.imdb_id = item.imdbId || metadata.imdb_id;
+          return { identifier, metadata };
+        }
+        return { identifier, metadata: null };
+      } catch (error) {
+        console.error(`Error fetching TMDB metadata for item ${identifier}:`, error.message);
+        return { identifier, metadata: null };
+      }
+    });
+    
+    return Promise.all(chunkPromises);
+  };
+  
+  const chunks = [];
+  for (let i = 0; i < items.length; i += CONCURRENCY_LIMIT) {
+    chunks.push(items.slice(i, i + CONCURRENCY_LIMIT));
+  }
+  
+  for (const chunk of chunks) {
+    const chunkResults = await processChunk(chunk);
+    chunkResults.forEach(({ identifier, metadata }) => {
+      if (metadata) {
+        results[identifier] = metadata;
+      }
+    });
+  }
+  
+  return results;
+}
+
+// ... (Rest of the file remains the same as your previous version)
 async function createTmdbRequestToken(userBearerToken) {
   if (!userBearerToken) throw new Error('TMDB Bearer Token is required');
   try {
@@ -25,7 +70,6 @@ async function createTmdbRequestToken(userBearerToken) {
     throw new Error(`Failed to create TMDB request token: ${error.message}`);
   }
 }
-
 async function createTmdbSession(requestToken, userBearerToken) {
   if (!userBearerToken) throw new Error('TMDB Bearer Token is required');
   try {
@@ -37,7 +81,6 @@ async function createTmdbSession(requestToken, userBearerToken) {
     throw new Error(`Failed to create TMDB session: ${error.message}`);
   }
 }
-
 async function getTmdbAccountDetails(sessionId, userBearerToken) {
   if (!userBearerToken) throw new Error('TMDB Bearer Token is required');
   try {
@@ -48,17 +91,14 @@ async function getTmdbAccountDetails(sessionId, userBearerToken) {
     throw new Error(`Failed to get TMDB account details: ${error.message}`);
   }
 }
-
 async function getTmdbAuthUrl(userBearerToken) {
   return await createTmdbRequestToken(userBearerToken);
 }
-
 async function authenticateTmdb(requestToken, userBearerToken) {
   const sessionData = await createTmdbSession(requestToken, userBearerToken);
   const accountData = await getTmdbAccountDetails(sessionData.sessionId, userBearerToken);
   return { sessionId: sessionData.sessionId, accountId: accountData.id, username: accountData.username, name: accountData.name };
 }
-
 async function fetchTmdbLists(userConfig) {
   if (!userConfig.tmdbSessionId || !userConfig.tmdbAccountId) return { isConnected: false, lists: [], addons: [], message: 'TMDB not connected.' };
   try {
@@ -72,7 +112,6 @@ async function fetchTmdbLists(userConfig) {
     return { isConnected: true, lists: [], addons: [], message: 'TMDB connected but failed to fetch lists.' };
   }
 }
-
 async function fetchTmdbListItems(listId, userConfig, skip = 0, sortBy = 'created_at', sortOrder = 'desc', genre = null) {
   if (!userConfig.tmdbSessionId || !userConfig.tmdbAccountId) return null;
   const limit = ITEMS_PER_PAGE;
@@ -108,7 +147,6 @@ async function fetchTmdbListItems(listId, userConfig, skip = 0, sortBy = 'create
     return null;
   }
 }
-
 async function processListItems(items, userConfig, genre) {
   if (!items || items.length === 0) return { allItems: [], hasMovies: false, hasShows: false };
   let hasMovies = false, hasShows = false;
@@ -146,7 +184,6 @@ async function processListItems(items, userConfig, genre) {
   const validItems = processedItems.filter(item => item.imdb_id || item.tmdb_id);
   return { allItems: validItems, hasMovies, hasShows };
 }
-
 async function validateTMDBKey(userBearerToken) {
   if (!userBearerToken) return false;
   try {
@@ -156,7 +193,6 @@ async function validateTMDBKey(userBearerToken) {
     return false;
   }
 }
-
 async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!imdbId || !imdbId.match(/^tt\d+$/)) return null;
   const cacheKey = `imdb_to_tmdb_${imdbId}`;
@@ -175,31 +211,6 @@ async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER
     return null;
   }
 }
-
-async function batchConvertImdbToTmdbIds(imdbIds, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
-  if (!imdbIds?.length) return {};
-  const results = {};
-  const uncachedIds = [];
-  for (const imdbId of imdbIds) {
-    const cacheKey = `imdb_to_tmdb_${imdbId}`;
-    const cachedResult = imdbToTmdbCache.get(cacheKey);
-    if (cachedResult) results[imdbId] = cachedResult === 'null' ? null : cachedResult;
-    else uncachedIds.push(imdbId);
-  }
-  if (uncachedIds.length === 0) return results;
-  const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 15;
-  const chunks = [];
-  for (let i = 0; i < uncachedIds.length; i += CONCURRENCY_LIMIT) {
-    chunks.push(uncachedIds.slice(i, i + CONCURRENCY_LIMIT));
-  }
-  for (const chunk of chunks) {
-    const chunkPromises = chunk.map(id => convertImdbToTmdbId(id, userBearerToken).then(res => ({ imdbId: id, result: res })));
-    const chunkResults = await Promise.all(chunkPromises);
-    chunkResults.forEach(({ imdbId, result }) => results[imdbId] = result);
-  }
-  return results;
-}
-
 async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!tmdbId) return null;
   const EPISODE_NUMBERING_VERSION = 'v2'; 
@@ -208,47 +219,21 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
   if (cachedResult) return cachedResult === 'null' ? null : cachedResult;
   try {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
-    const response = await axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${tmdbId}`, {
-      params: { language, append_to_response: 'credits,videos,external_ids,images' },
-      headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` },
-      timeout: TMDB_REQUEST_TIMEOUT
-    });
+    const response = await axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${tmdbId}`, { params: { language, append_to_response: 'credits,videos,external_ids,images' }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT });
     const data = response.data;
-    
-    // --- START OF FIX ---
-    // For series, fetch details for seasons that actually exist.
     if (type === 'series' && data.seasons && data.seasons.length > 0) {
       try {
         const seasonPromises = data.seasons.map(season => {
-          // Only fetch seasons with episodes and a valid season number (>= 0)
           if (season.episode_count > 0 && season.season_number >= 0) {
-            return axios.get(`${TMDB_BASE_URL_V3}/tv/${tmdbId}/season/${season.season_number}`, {
-              params: { language },
-              headers: {
-                'accept': 'application/json',
-                'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}`
-              },
-              timeout: TMDB_REQUEST_TIMEOUT
-            }).catch(error => {
-              // It's okay for a single season fetch to fail, especially specials (Season 0).
-              console.warn(`[TMDB] Could not fetch details for season ${season.season_number} of series ${tmdbId}.`);
-              return null;
-            });
+            return axios.get(`${TMDB_BASE_URL_V3}/tv/${tmdbId}/season/${season.season_number}`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT }).catch(e => null);
           }
           return null;
-        }).filter(Boolean); // Filter out null promises for seasons we skip
-
-        const seasonResponses = await Promise.all(seasonPromises);
-        const validSeasons = seasonResponses.filter(response => response && response.data);
-        
-        data.seasons_with_episodes = validSeasons.map(response => response.data);
-
+        }).filter(Boolean);
+        data.seasons_with_episodes = (await Promise.all(seasonPromises)).filter(Boolean).map(r => r.data);
       } catch (error) {
         console.warn(`[TMDB] Failed to fetch some episode data for series ${tmdbId}:`, error.message);
       }
     }
-    // --- END OF FIX ---
-
     const stremioMeta = convertTmdbToStremioFormat(data, type);
     tmdbCache.set(cacheKey, stremioMeta);
     return stremioMeta;
@@ -258,7 +243,6 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
     return null;
   }
 }
-
 function convertTmdbToStremioFormat(tmdbData, type) {
   const isMovie = type === 'movie';
   const tmdbId = `tmdb:${tmdbData.id}`;
@@ -309,45 +293,9 @@ function convertTmdbToStremioFormat(tmdbData, type) {
     });
     videos.sort((a, b) => a.season !== b.season ? a.season - b.season : a.episode - b.episode);
   }
-  const metadata = {
-    id: tmdbId, imdb_id: imdbId, tvdb_id: tvdbId, type: type, name: isMovie ? tmdbData.title : tmdbData.name, description: tmdbData.overview || "", poster: tmdbData.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbData.poster_path}` : undefined, background: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/original${tmdbData.backdrop_path}` : undefined, releaseInfo: formattedYear, year: formattedYear, released: releaseDate ? `${releaseDate}T00:00:00.000Z` : undefined, runtime: isMovie ? (tmdbData.runtime ? `${tmdbData.runtime} min` : undefined) : (tmdbData.episode_run_time?.[0] ? `${tmdbData.episode_run_time[0]} min` : undefined), genres: tmdbData.genres?.map(g => g.name) || [], cast: cast.length > 0 ? cast : undefined, director: directors.length > 0 ? directors : undefined, writer: writers.length > 0 ? writers : undefined, imdbRating: tmdbData.vote_average?.toFixed(1), country: isMovie ? (tmdbData.production_countries?.[0]?.name) : (tmdbData.origin_country?.[0]), trailerStreams: trailerVideos.length > 0 ? trailerVideos.map(v => ({ title: tmdbData.title || tmdbData.name, ytId: v.key })) : undefined, videos: videos, status: !isMovie ? tmdbData.status : undefined, tmdbId: tmdbData.id, tmdb_logo: tmdbLogo, behaviorHints: { hasScheduledVideos: !isMovie }
-  };
+  const metadata = { id: tmdbId, imdb_id: imdbId, tvdb_id: tvdbId, type: type, name: isMovie ? tmdbData.title : tmdbData.name, description: tmdbData.overview || "", poster: tmdbData.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbData.poster_path}` : undefined, background: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/original${tmdbData.backdrop_path}` : undefined, releaseInfo: formattedYear, year: formattedYear, released: releaseDate ? `${releaseDate}T00:00:00.000Z` : undefined, runtime: isMovie ? (tmdbData.runtime ? `${tmdbData.runtime} min` : undefined) : (tmdbData.episode_run_time?.[0] ? `${tmdbData.episode_run_time[0]} min` : undefined), genres: tmdbData.genres?.map(g => g.name) || [], cast: cast.length > 0 ? cast : undefined, director: directors.length > 0 ? directors : undefined, writer: writers.length > 0 ? writers : undefined, imdbRating: tmdbData.vote_average?.toFixed(1), country: isMovie ? (tmdbData.production_countries?.[0]?.name) : (tmdbData.origin_country?.[0]), trailerStreams: trailerVideos.length > 0 ? trailerVideos.map(v => ({ title: tmdbData.title || tmdbData.name, ytId: v.key })) : undefined, videos: videos, status: !isMovie ? tmdbData.status : undefined, tmdbId: tmdbData.id, tmdb_logo: tmdbLogo, behaviorHints: { hasScheduledVideos: !isMovie } };
   return metadata;
 }
-
-async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
-  if (!items?.length) return {};
-  const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 12;
-  const results = {};
-  const chunks = [];
-  for (let i = 0; i < items.length; i += CONCURRENCY_LIMIT) {
-    chunks.push(items.slice(i, i + CONCURRENCY_LIMIT));
-  }
-  for (const chunk of chunks) {
-    const chunkPromises = chunk.map(async (item) => {
-      const identifier = item.imdbId || `tmdb:${item.tmdbId}`;
-      try {
-        const metadata = await fetchTmdbMetadata(item.tmdbId, item.type, language, userBearerToken);
-        if (metadata) {
-          if (item.imdbId) {
-            metadata.id = item.imdbId;
-            metadata.imdb_id = item.imdbId;
-          }
-          return { identifier, metadata };
-        }
-        return { identifier, metadata: null };
-      } catch (error) {
-        return { identifier, metadata: null };
-      }
-    });
-    const chunkResults = await Promise.all(chunkPromises);
-    chunkResults.forEach(({ identifier, metadata }) => {
-      if (metadata) results[identifier] = metadata;
-    });
-  }
-  return results;
-}
-
 async function fetchTmdbGenres(language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!language) return [];
   const cacheKey = `tmdb_genres_${language}`;
@@ -371,12 +319,10 @@ async function fetchTmdbGenres(language = 'en-US', userBearerToken = DEFAULT_TMD
     return [];
   }
 }
-
 function clearTmdbCaches() {
   tmdbCache.clear();
   imdbToTmdbCache.clear();
 }
-
 module.exports = {
   createTmdbRequestToken,
   createTmdbSession,
@@ -393,3 +339,4 @@ module.exports = {
   fetchTmdbGenres,
   clearTmdbCaches
 };
+
