@@ -15,29 +15,6 @@ function normalizeImdbId(id) {
   return null;
 }
 
-async function fetchCinemetaChunk(imdbIdChunk, type) {
-  const CINEMETA_TIMEOUT = 10000;
-  try {
-    const promises = imdbIdChunk.map(async (imdbId) => {
-      try {
-        const response = await axios.get(`${CINEMETA_BASE}/meta/${type}/${imdbId}.json`, { timeout: CINEMETA_TIMEOUT });
-        return { imdbId, data: response.data?.meta };
-      } catch (error) {
-        return { imdbId, data: null };
-      }
-    });
-    const results = await Promise.all(promises);
-    const metadataMap = {};
-    results.forEach(({ imdbId, data }) => {
-      if (data) metadataMap[imdbId] = data;
-    });
-    return metadataMap;
-  } catch (error) {
-    console.error('Error fetching Cinemeta chunk:', error.message);
-    return {};
-  }
-}
-
 async function enrichItemsWithMetadata(items, userConfig) {
   const { metadataSource, tmdbSessionId, tmdbAccountId, tmdbLanguage, tmdbBearerToken, rpdbApiKey } = userConfig;
   
@@ -48,16 +25,12 @@ async function enrichItemsWithMetadata(items, userConfig) {
   let baseEnrichedItems;
   const hasTmdbAccess = (tmdbSessionId && tmdbAccountId) || tmdbBearerToken;
 
-  // Step 1: Get base metadata from the primary source.
   if (metadataSource === 'tmdb' && hasTmdbAccess) {
-    // If the source is TMDB, we ONLY use TMDB. No fallback to Cinemeta.
     baseEnrichedItems = await enrichItemsWithTMDB(items, tmdbLanguage, tmdbBearerToken, userConfig);
   } else {
-    // If the source is Cinemeta, we use Cinemeta.
     baseEnrichedItems = await enrichItemsWithCinemeta(items);
   }
 
-  // Step 2: Apply the sophisticated image fallback logic
   const finalEnrichedItems = await Promise.all(
     baseEnrichedItems.map(async (item) => {
       if (!item.imdb_id && !item.tmdbId) return item;
@@ -69,23 +42,21 @@ async function enrichItemsWithMetadata(items, userConfig) {
         fanartImages = await getSeriesFanart(item.tvdb_id, item.tmdbId, tmdbLanguage, item.original_language);
       }
 
-      // --- Image Fallback Logic ---
       item.logo = fanartImages.logo || item.tmdb_logo || item.logo;
-      item.background = item.background || fanartImages.background;
+      item.background = fanartImages.background || item.background;
       item.poster = fanartImages.poster || item.poster;
 
       return item;
     })
   );
 
-  // Step 3: Apply RPDB posters (highest priority if key exists)
   if (rpdbApiKey) {
     const imdbIds = finalEnrichedItems.map(item => item.imdb_id).filter(Boolean);
     if (imdbIds.length > 0) {
       const posterMap = await batchFetchPosters(imdbIds, rpdbApiKey, tmdbLanguage);
       finalEnrichedItems.forEach(item => {
         if (item.imdb_id && posterMap[item.imdb_id]) {
-          item.poster = posterMap[item.imdb_id]; // Overwrite with RPDB poster
+          item.poster = posterMap[item.imdb_id];
         }
       });
     }
@@ -94,39 +65,24 @@ async function enrichItemsWithMetadata(items, userConfig) {
   return finalEnrichedItems;
 }
 
-// This function now exclusively fetches from TMDB and does not fall back.
 async function enrichItemsWithTMDB(items, language, userBearerToken, userConfig) {
-    if (!items || items.length === 0) return items;
+  if (!items || items.length === 0) return items;
 
-    // --- DISABLED CINEMETA FALLBACK LOGIC ---
-    // The Cinemeta fallback has been disabled by simplifying this function.
-    // The addon will now only use TMDB when it is the selected metadata source.
-
-    // This helper function will now correctly fetch and merge the data.
-    const enrichedItems = await fetchAndEnrichFromTmdb(items, language, userBearerToken, userConfig);
-
-    // There is no fallback. We return whatever TMDB gave us.
-    // If an item failed, it will just have its original, limited data.
-    return enrichedItems;
+  const enrichedItems = await fetchAndEnrichFromTmdb(items, language, userBearerToken, userConfig);
+  
+  return enrichedItems;
 }
 
-// This helper function now only returns successful fetches.
 async function fetchAndEnrichFromTmdb(items, language, userBearerToken, userConfig) {
-    // 1. Prepare items for processing, identifying both IMDb and TMDB IDs.
-    const itemsToProcess = items.map(item => {
-        const imdbId = normalizeImdbId(item.imdb_id || item.id);
-        const tmdbIdFromId = item.id?.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : null;
-        return {
-            imdbId: imdbId,
-            tmdbId: item.tmdbId || tmdbIdFromId,
-            type: item.type,
-            originalItem: item
-        };
-    });
+    const itemsToProcess = items.map(item => ({
+        imdbId: normalizeImdbId(item.imdb_id || item.id),
+        tmdbId: item.id?.startsWith('tmdb:') ? item.id.replace('tmdb:', '') : item.tmdbId,
+        type: item.type,
+        originalItem: item
+    }));
 
-    // 2. Find items that need their TMDB ID looked up via their IMDb ID.
     const needsConversion = itemsToProcess.filter(item => item.imdbId && !item.tmdbId);
-    const readyForFetch = itemsToProcess.filter(item => item.tmdbId);
+    let readyForFetch = itemsToProcess.filter(item => item.tmdbId);
 
     if (needsConversion.length > 0) {
         const imdbIdsToConvert = needsConversion.map(item => item.imdbId);
@@ -135,7 +91,6 @@ async function fetchAndEnrichFromTmdb(items, language, userBearerToken, userConf
         needsConversion.forEach(item => {
             const conversionResult = conversionMap[item.imdbId];
             if (conversionResult) {
-                // Add the successfully converted item to the list of items ready to be fetched.
                 readyForFetch.push({
                     ...item,
                     tmdbId: conversionResult.tmdbId,
@@ -145,38 +100,29 @@ async function fetchAndEnrichFromTmdb(items, language, userBearerToken, userConf
         });
     }
 
-    if (readyForFetch.length === 0) {
-        // If no items could be resolved to a TMDB ID, return the original items.
-        return items;
-    }
+    if (readyForFetch.length === 0) return items;
 
-    // 3. Fetch full metadata from TMDB for all items that now have a TMDB ID.
     const uniqueItemsToFetch = Array.from(new Map(readyForFetch.map(item => [item.tmdbId, item])).values());
     const tmdbMetadataMap = await batchFetchTmdbMetadata(uniqueItemsToFetch, language, userBearerToken);
 
-    // 4. Merge the fetched metadata back into the original items list, maintaining order.
     return items.map(originalItem => {
-        // Find the corresponding processed item to get the resolved IDs.
         const processedItem = readyForFetch.find(p => p.originalItem === originalItem);
-        const fetchedMeta = processedItem ? tmdbMetadataMap[processedItem.imdbId] || tmdbMetadataMap[`tmdb:${processedItem.tmdbId}`] : null;
+        const fetchedMeta = processedItem ? tmdbMetadataMap[processedItem.tmdbId] : null;
 
         if (fetchedMeta) {
-            // If we have new metadata, merge it with the original item.
-            // Ensure the final 'id' matches the one Stremio will use to call the meta handler.
-            const finalId = originalItem.id;
-            return { ...originalItem, ...fetchedMeta, id: finalId };
+            // CRITICAL FIX: Ensure the final ID is the TMDB ID for routing.
+            // The imdb_id is preserved for other uses (like RPDB).
+            fetchedMeta.id = `tmdb:${fetchedMeta.tmdbId}`;
+            return { ...originalItem, ...fetchedMeta };
         }
         
-        // If no metadata was fetched for this item, return it as-is. NO CINEMETA FALLBACK.
         return originalItem;
     });
 }
 
 
-// This function is now only called if the user explicitly selects "Cinemeta" as the source.
 async function enrichItemsWithCinemeta(items) {
   if (!items || items.length === 0) return [];
-  
   const processedItems = items.map((item, index) => ({
     originalIndex: index,
     imdbId: normalizeImdbId(item.imdb_id || item.id),
@@ -207,7 +153,6 @@ async function fetchCinemetaBatched(imdbIds, type) {
   if (!imdbIds || imdbIds.length === 0) return {};
   const allMetadata = {};
   const CINEMETA_BATCH_SIZE = BATCH_SIZE;
-  
   for (let i = 0; i < imdbIds.length; i += CINEMETA_BATCH_SIZE) {
     const batch = imdbIds.slice(i, i + CINEMETA_BATCH_SIZE);
     try {
@@ -221,3 +166,4 @@ async function fetchCinemetaBatched(imdbIds, type) {
 }
 
 module.exports = { enrichItemsWithMetadata };
+
