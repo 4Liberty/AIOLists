@@ -7,6 +7,7 @@ const { convertToStremioFormat } = require('./converters');
 const { isWatchlist } = require('../utils/common');
 const { staticGenres, MANIFEST_GENERATION_CONCURRENCY, ENABLE_MANIFEST_CACHE } = require('../config');
 const axios = require('axios');
+const { enrichItemsWithMetadata } = require('../utils/metadataFetcher'); // Import the main enrichment function
 
 // Cache for manifest generation to avoid re-processing unchanged lists
 const manifestCache = new Map();
@@ -1129,13 +1130,13 @@ async function createAddon(userConfig) {
           const envToken = require('../config').TMDB_BEARER_TOKEN;
       const tmdbBearerToken = userConfig.tmdbBearerToken || envToken;
     
-    const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
     const enrichedItems = await enrichItemsWithMetadata(
       itemsResult.allItems, 
       metadataSource, 
       hasTmdbOAuth, 
       tmdbLanguage, 
-      tmdbBearerToken
+      tmdbBearerToken,
+      userConfig.rpdbApiKey
     );
     const enrichEndTime = Date.now();
     
@@ -1219,272 +1220,65 @@ async function createAddon(userConfig) {
     return Promise.resolve({ metas, cacheMaxAge });
   });
 
+  // --- META HANDLER - REWRITTEN FOR CONSISTENCY ---
   builder.defineMetaHandler(async ({ type, id }) => {
-    // Support both IMDB IDs (tt) and TMDB IDs (tmdb:)
-    if (!id.startsWith('tt') && !id.startsWith('tmdb:')) {
-      return Promise.resolve({ meta: null });
-    }
-    
     try {
-      // Extract metadata config from userConfig
+      if (!id.startsWith('tt') && !id.startsWith('tmdb:')) {
+        return Promise.resolve({ meta: null });
+      }
+
+      // Use the exact same enrichment function as the catalog handler
+      // This ensures consistent data fetching and fallback logic for both views
       const metadataSource = userConfig.metadataSource || 'cinemeta';
       const hasTmdbOAuth = !!(userConfig.tmdbSessionId && userConfig.tmdbAccountId);
       const tmdbLanguage = userConfig.tmdbLanguage || 'en-US';
       const tmdbBearerToken = userConfig.tmdbBearerToken || require('../config').TMDB_BEARER_TOKEN;
-      
-      
-      
-      // Use user's preferred language for episode names and metadata
-      const metaLanguage = tmdbLanguage;
-      
-      // Handle TMDB IDs differently based on source preference or language settings
-      // Use TMDB if: 1) Direct TMDB ID, 2) User prefers TMDB source, 3) User has non-English TMDB language set
-      const shouldUseTmdb = id.startsWith('tmdb:') || 
-                           (metadataSource === 'tmdb' && tmdbBearerToken) ||
-                           (tmdbBearerToken && tmdbLanguage && tmdbLanguage !== 'en-US');
-      
-      if (shouldUseTmdb) {
-        let tmdbId, tmdbType, originalImdbId;
-        
-        if (id.startsWith('tmdb:')) {
-          // Direct TMDB ID
-          tmdbId = id.replace('tmdb:', '');
-          tmdbType = type;
-          
-          // Try to get IMDB ID for this TMDB item for cross-referencing
-          try {
-            const { fetchTmdbMetadata } = require('../integrations/tmdb');
-            const tmdbData = await fetchTmdbMetadata(tmdbId, tmdbType, metaLanguage, tmdbBearerToken);
-            if (tmdbData?.imdb_id) {
-              originalImdbId = tmdbData.imdb_id;
-            }
-          } catch (error) {
-            console.warn(`[MetaHandler] Could not fetch IMDB ID for TMDB:${tmdbId}:`, error.message);
-          }
-        } else if (id.startsWith('tt')) {
-          // Convert IMDB ID to TMDB ID and get TMDB metadata using tmdb: format
-          originalImdbId = id;
-          const { convertImdbToTmdbId } = require('../integrations/tmdb');
-          const tmdbResult = await convertImdbToTmdbId(id, tmdbBearerToken);
-          if (tmdbResult && tmdbResult.tmdbId) {
-            tmdbId = tmdbResult.tmdbId;
-            tmdbType = tmdbResult.type;
-          }
-        }
-        
-        if (tmdbId) {
-          try {
-  
-            // Fetch comprehensive TMDB metadata
-            const { fetchTmdbMetadata } = require('../integrations/tmdb');
-            const tmdbMeta = await fetchTmdbMetadata(tmdbId, tmdbType, metaLanguage, tmdbBearerToken);
-            
-            if (tmdbMeta) {
-              // Always preserve the original request ID format
-              tmdbMeta.id = id;
-              tmdbMeta.imdb_id = originalImdbId || tmdbMeta.imdb_id;
-              
-              // Supplement with IMDB rating and missing fields from Cinemeta
-              const imdbIdForCinemeta = tmdbMeta.imdb_id;
-              if (imdbIdForCinemeta && imdbIdForCinemeta.startsWith('tt')) {
-                try {
-                  const cinemetaResponse = await axios.get(`https://v3-cinemeta.strem.io/meta/${tmdbType}/${imdbIdForCinemeta}.json`, { 
-                    timeout: 3000 
-                  });
-                  
-                  const cinemetaMeta = cinemetaResponse.data?.meta;
-                  if (cinemetaMeta) {
-                    // Use Cinemeta's IMDB rating as it's more authoritative
-                    if (cinemetaMeta.imdbRating) {
-                      tmdbMeta.imdbRating = cinemetaMeta.imdbRating;
-                    }
-                    
-                    // Fill missing essential Cinemeta fields
-                    if (cinemetaMeta.awards && !tmdbMeta.awards) {
-                      tmdbMeta.awards = cinemetaMeta.awards;
-                    }
-                    if (cinemetaMeta.dvdRelease && !tmdbMeta.dvdRelease) {
-                      tmdbMeta.dvdRelease = cinemetaMeta.dvdRelease;
-                    }
-                    if (cinemetaMeta.country && !tmdbMeta.country) {
-                      tmdbMeta.country = cinemetaMeta.country;
-                    }
-                    // Prefer Cinemeta logo if TMDB doesn't have one
-                    if (cinemetaMeta.logo && !tmdbMeta.logo) {
-                      tmdbMeta.logo = cinemetaMeta.logo;
-                    }
-                    
-      
-                  }
-                } catch (cinemetaError) {
-                  console.warn(`[MetaHandler] Could not fetch Cinemeta data for ${imdbIdForCinemeta}:`, cinemetaError.message);
-                }
-              }
-              
-              // Format fields to match Stremio's expected format
-              
-              // Format runtime for series (convert minutes to proper format)
-              if (tmdbType === 'series' && tmdbMeta.runtime) {
-                const runtimeMinutes = parseInt(tmdbMeta.runtime);
-                if (runtimeMinutes && !isNaN(runtimeMinutes)) {
-                  const hours = Math.floor(runtimeMinutes / 60);
-                  const minutes = runtimeMinutes % 60;
-                  if (hours > 0) {
-                    // Format as "hh:mm" for durations over an hour
-                    const paddedMinutes = minutes.toString().padStart(2, '0');
-                    tmdbMeta.runtime = `${hours}:${paddedMinutes}`;
-                  } else {
-                    // Format as "XX min" for durations under an hour
-                    tmdbMeta.runtime = `${minutes} min`;
-                  }
-                }
-              }
-              
-              // Episode ratings should already be properly formatted by TMDB integration
-              // No additional processing needed here
-              
-              // Format slug to match expected pattern
-              if (tmdbMeta.name && tmdbMeta.imdb_id) {
-                const imdbNumber = tmdbMeta.imdb_id.replace('tt', '');
-                tmdbMeta.slug = `${tmdbType}/${tmdbMeta.name}-${imdbNumber}`;
-              }
-              
-              // Writer field should already be available from TMDB conversion
-              // No need to extract again if it's already present
-              
-              // Clean up extra TMDB-specific fields that shouldn't be in Stremio format
-              const fieldsToRemove = [
-                'tmdbId', 'moviedb_id', 'tmdbRating', 'tmdbVotes', 
-                'popularity', 'popularities', 'credits'
-              ];
-              fieldsToRemove.forEach(field => {
-                if (tmdbMeta.hasOwnProperty(field)) {
-                  delete tmdbMeta[field];
-                }
-              });
-              
-              // Enhance behavioral hints for better Stremio integration
-              tmdbMeta.behaviorHints = {
-                defaultVideoId: null, // Set to null for series as per expected format
-                hasScheduledVideos: tmdbType === 'series',
-                p2p: false,
-                configurable: false,
-                configurationRequired: false
-              };
-              
 
-              
-              return Promise.resolve({ 
-                meta: tmdbMeta,
-                cacheMaxAge: 24 * 60 * 60 // Cache for 24 hours
-              });
-            }
-          } catch (tmdbError) {
-            console.error(`[MetaHandler] TMDB metadata fetch failed for ${id}:`, tmdbError.message);
-            console.error(`[MetaHandler] TMDB error stack:`, tmdbError.stack);
-          }
-        } else {
-          console.warn(`[MetaHandler] No TMDB ID found for ${id}`);
-        }
-      }
-      
-      // Fallback to standard enrichment process for non-TMDB sources or failures
-      const itemForEnrichment = [{
+      // Create a dummy item to pass to the enrichment function
+      const itemToEnrich = [{
         id: id,
-        imdb_id: id.startsWith('tt') ? id : undefined,
         type: type,
-        title: "Loading...",
-        name: "Loading..."
+        imdb_id: id.startsWith('tt') ? id : undefined,
+        // No other properties needed, enrichment will fill them
       }];
-      
-      const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
-      const enrichedItems = await enrichItemsWithMetadata(itemForEnrichment, metadataSource, hasTmdbOAuth, tmdbLanguage, tmdbBearerToken);
-      
+
+      // Call the main enrichment function
+      const enrichedItems = await enrichItemsWithMetadata(
+        itemToEnrich,
+        metadataSource,
+        hasTmdbOAuth,
+        tmdbLanguage,
+        tmdbBearerToken,
+        userConfig.rpdbApiKey
+      );
+
       if (enrichedItems && enrichedItems.length > 0) {
-        const enrichedItem = enrichedItems[0];
-        
-        // Create a comprehensive meta object
-        const meta = {
-          id: id,
-          imdb_id: id.startsWith('tt') ? id : enrichedItem.imdb_id,
-          type: type,
-          name: enrichedItem.name || enrichedItem.title || "Unknown Title",
-          poster: enrichedItem.poster,
-          background: enrichedItem.background || enrichedItem.backdrop,
-          description: enrichedItem.description || enrichedItem.overview,
-          releaseInfo: enrichedItem.releaseInfo || enrichedItem.year || 
-                       (enrichedItem.release_date ? enrichedItem.release_date.split('-')[0] : 
-                       (enrichedItem.first_air_date ? enrichedItem.first_air_date.split('-')[0] : undefined)),
-          year: enrichedItem.year,
-          released: enrichedItem.released,
-          imdbRating: enrichedItem.imdbRating,
-          runtime: enrichedItem.runtime,
-          genres: enrichedItem.genres,
-          genre: enrichedItem.genres, // Cinemeta compatibility
-          cast: enrichedItem.cast,
-          director: enrichedItem.director,
-          writer: enrichedItem.writer,
-          country: enrichedItem.country,
-          trailers: enrichedItem.trailers,
-          trailerStreams: enrichedItem.trailerStreams,
-          videos: enrichedItem.videos || [],
-          links: enrichedItem.links || [],
-          awards: enrichedItem.awards,
-          dvdRelease: enrichedItem.dvdRelease,
-          logo: enrichedItem.logo,
-          slug: enrichedItem.slug,
-          popularity: enrichedItem.popularity,
-          popularities: enrichedItem.popularities,
-          status: type === 'series' ? enrichedItem.status : undefined,
-          behaviorHints: {
-            defaultVideoId: id,
-            hasScheduledVideos: type === 'series',
-            p2p: false,
-            configurable: false,
-            configurationRequired: false
-          }
-        };
-        
-        // Clean up undefined values
+        // The first (and only) item in the array is our result
+        const meta = enrichedItems[0];
+
+        // Ensure the ID in the final object matches the requested ID
+        meta.id = id;
+
+        // Clean up any undefined values before sending
         Object.keys(meta).forEach(key => {
           if (meta[key] === undefined) {
             delete meta[key];
           }
         });
-        
 
-        
         return Promise.resolve({ 
           meta,
-          cacheMaxAge: 12 * 60 * 60 // 12 hours cache
+          cacheMaxAge: 24 * 60 * 60 // Cache meta details for 24 hours
         });
       }
-      
-      // Final fallback - but first log what went wrong
-      console.error(`[MetaHandler] All metadata sources failed for ${id}, returning fallback`);
-      return Promise.resolve({ 
-        meta: { 
-          id, 
-          type, 
-          name: "Details unavailable",
-          behaviorHints: {
-            hasScheduledVideos: type === 'series'
-          }
-        }
-      });
-      
+
+      // If enrichment fails completely, return a minimal response
+      console.error(`[MetaHandler] All metadata sources failed for ${id}`);
+      return Promise.resolve({ meta: { id, type, name: "Details unavailable" } });
+
     } catch (error) {
       console.error(`Error in meta handler for ${id}:`, error);
-      return Promise.resolve({ 
-        meta: { 
-          id, 
-          type, 
-          name: "Error loading details",
-          behaviorHints: {
-            hasScheduledVideos: type === 'series'
-          }
-        }
-      });
+      return Promise.resolve({ meta: { id, type, name: "Error loading details" } });
     }
   });
 
