@@ -1,12 +1,10 @@
 /**
  * TMDB Integration - OAuth Authentication for User Lists
- * 
- * TMDB API v3 authentication flow:
+ * * TMDB API v3 authentication flow:
  * 1. Create a request token via /3/authentication/token/new
  * 2. User authorization through TMDB website  
  * 3. Create session ID via /3/authentication/session/new
- * 
- * This allows access to user's watchlists, favorites, and custom lists.
+ * * This allows access to user's watchlists, favorites, and custom lists.
  */
 
 const axios = require('axios');
@@ -698,7 +696,7 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
       }
     }
     
- // Fetch Fanart.tv logo
+    // Fetch Fanart.tv logo
     if (type === 'movie') {
         data.logo = await getLogo(tmdbId, language, data.original_language);
     } else if (type === 'series') {
@@ -730,6 +728,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   // Use tmdb: format for ID, preserve IMDB ID separately
   const tmdbId = `tmdb:${tmdbData.id}`;
   const imdbId = tmdbData.external_ids?.imdb_id || tmdbData.imdb_id;
+  const tvdbId = tmdbData.external_ids?.tvdb_id; // <<<====== THIS IS THE FIX
   
   // Extract cast and crew
   const cast = tmdbData.credits?.cast?.slice(0, 10).map(person => person.name) || [];
@@ -779,9 +778,9 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   }
 
   // Get logos from TMDB images
-  let logo = undefined;
-  if (tmdbData.images?.logos && tmdbData.images.logos.length > 0) {
-    // Prefer English logos or the first available
+  let logo = tmdbData.logo; // Use the logo passed in from fetchTmdbMetadata
+  if (!logo && tmdbData.images?.logos && tmdbData.images.logos.length > 0) {
+    // Fallback to TMDB's own logos if Fanart fails
     const englishLogo = tmdbData.images.logos.find(img => img.iso_639_1 === 'en') || tmdbData.images.logos[0];
     logo = `https://image.tmdb.org/t/p/original${englishLogo.file_path}`;
   }
@@ -919,6 +918,7 @@ function convertTmdbToStremioFormat(tmdbData, type) {
   const metadata = {
     id: tmdbId,
     imdb_id: imdbId,
+    tvdb_id: tvdbId, // <<<====== THIS IS THE FIX
     type: type,
     name: isMovie ? tmdbData.title : tmdbData.name,
     description: tmdbData.overview || "",
