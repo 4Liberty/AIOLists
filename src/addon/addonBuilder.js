@@ -39,11 +39,10 @@ function getManifestCacheKey(userConfig) {
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const METADATA_FETCH_RETRY_DELAY_MS = 2000; // Reduced from 5000
+const METADATA_FETCH_RETRY_DELAY_MS = 2000;
 const MAX_METADATA_FETCH_RETRIES = 2;
-// Removed DELAY_BETWEEN_DIFFERENT_TRAKT_LISTS_MS as we are removing artificial delays
 
-// ... (The rest of the file is the same as the last version you received, I'll include the full code for completeness)
+// Lightweight metadata checking without full enrichment
 async function getLightweightListMetadata(listId, userConfig, type = 'all') {
   const startTime = Date.now();
   
@@ -136,6 +135,7 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
     const randomUsername = randomMDBListUsernames[Math.floor(Math.random() * randomMDBListUsernames.length)];
     
     if (apiKey) {
+      // Use API-based approach when API key is available
       const userLists = await fetchAllListsForUser(apiKey, randomUsername);
       if (userLists && userLists.length > 0) {
         const randomUserList = userLists[Math.floor(Math.random() * userLists.length)];
@@ -146,6 +146,10 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
         itemsResult = { allItems: [], hasMovies: false, hasShows: false };
       }
     } else {
+      // Fallback to public JSON approach when no API key is available
+      
+      // For public JSON, we'll use a predefined list of popular/well-known lists
+      // This is a simplified approach since we can't discover lists without an API key
       const popularListSlugs = [
         'latest-tv-shows', 'top-rated-movies-2024', 'latest-movies', 'popular-series', 
         'trending-movies', 'best-sci-fi-movies', 'top-horror-movies', 'classic-movies',
@@ -155,10 +159,12 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
       const randomListSlug = popularListSlugs[Math.floor(Math.random() * popularListSlugs.length)];
       const randomCatalogSortPrefs = sortPreferences?.['random_mdblist_catalog'] || { sort: 'rank', order: 'asc' };
       
+      // Try to fetch using public JSON
       const { fetchListItemsFromPublicJson } = require('../integrations/mdblist');
       itemsResult = await fetchListItemsFromPublicJson(randomUsername, randomListSlug, skip, randomCatalogSortPrefs.sort, randomCatalogSortPrefs.order, genre, userConfig, false);
       
       if (!itemsResult) {
+        // Try another random combination
         const altUsername = randomMDBListUsernames[Math.floor(Math.random() * randomMDBListUsernames.length)];
         const altListSlug = popularListSlugs[Math.floor(Math.random() * popularListSlugs.length)];
         itemsResult = await fetchListItemsFromPublicJson(altUsername, altListSlug, skip, randomCatalogSortPrefs.sort, randomCatalogSortPrefs.order, genre, userConfig, false);
@@ -176,13 +182,16 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
       itemsResult = await fetchTraktListItems( addonConfig.id, userConfig, skip, sortPrefsForImportedOrRandom.sort, sortPrefsForImportedOrRandom.order, true, addonConfig.traktUser, itemTypeHintForFetching, genre );
     } else if (addonConfig.isMDBListUrlImport) {
       if (apiKey && addonConfig.mdblistId) {
+        // Use API approach with the converted numeric ID (premium access)
         const isListUserMerged = userConfig.mergedLists?.[catalogIdFromRequest] !== false;
         itemsResult = await fetchMDBListItems( addonConfig.mdblistId, apiKey, listsMetadata, skip, sortPrefsForImportedOrRandom.sort, sortPrefsForImportedOrRandom.order, true, genre, null, isListUserMerged, userConfig );
       } else if (apiKey) {
+        // Use API approach when available (legacy handling for lists that don't have mdblistId)
         const listIdForApi = addonConfig.mdblistId || addonConfig.listId;
         const isListUserMerged = userConfig.mergedLists?.[catalogIdFromRequest] !== false;
         itemsResult = await fetchMDBListItems( listIdForApi, apiKey, listsMetadata, skip, sortPrefsForImportedOrRandom.sort, sortPrefsForImportedOrRandom.order, true, genre, null, isListUserMerged, userConfig );
       } else if (addonConfig.mdblistUsername && addonConfig.mdblistSlug) {
+        // Use public JSON fallback when no API key is available
         const { fetchListItemsFromPublicJson } = require('../integrations/mdblist');
         const isListUserMerged = userConfig.mergedLists?.[catalogIdFromRequest] !== false;
         itemsResult = await fetchListItemsFromPublicJson(
@@ -205,6 +214,7 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
       const catalogEntry = parentAddon.catalogs?.find(c => String(c.id) === String(catalogIdFromRequest));
       if (catalogEntry) {
         const externalResult = await fetchExternalAddonItems( catalogEntry.originalId, catalogEntry.originalType, parentAddon, skip, rpdbApiKey, genre, userConfig );
+        // Convert external addon format to standard format for enrichment
         if (externalResult && externalResult.metas) {
           itemsResult = {
             allItems: externalResult.metas,
@@ -575,7 +585,6 @@ async function createAddon(userConfig) {
       }
     });
     await Promise.all(chunkPromises);
-    // REMOVED DELAY
   }
   
   for (const addon of Object.values(importedAddons || {})) {
@@ -711,20 +720,37 @@ async function createAddon(userConfig) {
       if (!id.startsWith('tt') && !id.startsWith('tmdb:')) {
         return Promise.resolve({ meta: null });
       }
+
       const metadataSource = userConfig.metadataSource || 'cinemeta';
       const hasTmdbOAuth = !!(userConfig.tmdbSessionId && userConfig.tmdbAccountId);
       const tmdbLanguage = userConfig.tmdbLanguage || 'en-US';
       const tmdbBearerToken = userConfig.tmdbBearerToken || require('../config').TMDB_BEARER_TOKEN;
-      const itemToEnrich = [{ id: id, type: type, imdb_id: id.startsWith('tt') ? id : undefined }];
-      const enrichedItems = await enrichItemsWithMetadata(itemToEnrich, metadataSource, hasTmdbOAuth, tmdbLanguage, tmdbBearerToken, userConfig.rpdbApiKey);
+
+      const itemToEnrich = [{
+        id: id,
+        type: type,
+        imdb_id: id.startsWith('tt') ? id : undefined,
+      }];
+
+      const enrichedItems = await enrichItemsWithMetadata(
+        itemToEnrich,
+        metadataSource,
+        hasTmdbOAuth,
+        tmdbLanguage,
+        tmdbBearerToken,
+        userConfig.rpdbApiKey
+      );
+
       if (enrichedItems && enrichedItems.length > 0) {
         const meta = enrichedItems[0];
         meta.id = id;
         Object.keys(meta).forEach(key => { if (meta[key] === undefined) delete meta[key]; });
         return Promise.resolve({ meta, cacheMaxAge: 24 * 60 * 60 });
       }
+
       console.error(`[MetaHandler] All metadata sources failed for ${id}`);
       return Promise.resolve({ meta: { id, type, name: "Details unavailable" } });
+
     } catch (error) {
       console.error(`Error in meta handler for ${id}:`, error);
       return Promise.resolve({ meta: { id, type, name: "Error loading details" } });
