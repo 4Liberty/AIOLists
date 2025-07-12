@@ -170,6 +170,7 @@ async function fetchPublicTraktListDetails(traktListUrl) {
 }
 async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank', sortOrder = 'asc', isPublicImport = false, publicUsername = null, itemTypeHint = null, genre = null, isMetadataCheck = false) {
   if (!listId) return null;
+  console.log(`[Trakt] fetchTraktListItems called: listId=${listId}, skip=${skip}, sortBy=${sortBy}, sortOrder=${sortOrder}, isPublicImport=${isPublicImport}, publicUsername=${publicUsername}, itemTypeHint=${itemTypeHint}, genre=${genre}, isMetadataCheck=${isMetadataCheck}`);
   const limit = isMetadataCheck ? 1 : ITEMS_PER_PAGE;
   const page = isMetadataCheck ? 1 : Math.floor(skip / limit) + 1;
   const headers = { 'Content-Type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': TRAKT_CLIENT_ID };
@@ -180,6 +181,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
   let requestUrl, params = { limit, page, extended: 'full' }, rawTraktEntries = [], effectiveItemTypeForEndpoint = itemTypeHint;
   try {
     if (isPublicImport && publicUsername) {
+      console.log(`[Trakt] Fetching public Trakt list: user=${publicUsername}, listId=${listId}, itemTypeHint=${itemTypeHint}`);
         const actualSlug = listId.replace(/^traktpublic_[^_]+_/, '');
         let basePath = `${TRAKT_API_URL}/users/${publicUsername}/lists/${actualSlug}/items`;
         if (itemTypeHint === 'movie') requestUrl = `${basePath}/movies`;
@@ -190,6 +192,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
             params.sort_by = sortBy; if (sortOrder) params.sort_how = sortOrder;
         }
     } else if (listId === 'trakt_watchlist') {
+      console.log(`[Trakt] Fetching Trakt watchlist: itemTypeHint=${itemTypeHint}`);
         let typeForEndpoint = itemTypeHint || 'all'; 
         if (itemTypeHint === 'series') typeForEndpoint = 'shows';
         if (itemTypeHint === 'movie') typeForEndpoint = 'movies';
@@ -198,11 +201,13 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         params = { limit, page, extended: 'full' };
         effectiveItemTypeForEndpoint = null; 
     } else if (listId.startsWith('trakt_recommendations_')) {
+      console.log(`[Trakt] Fetching Trakt recommendations: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         effectiveItemTypeForEndpoint = listId.endsWith('_movies') ? 'movie' : (listId.endsWith('_shows') ? 'series' : null);
         if (!effectiveItemTypeForEndpoint) return null; 
         requestUrl = `${TRAKT_API_URL}/recommendations/${effectiveItemTypeForEndpoint === 'series' ? 'shows' : 'movies'}`;
         if (genre && !isMetadataCheck) params.genres = genre.toLowerCase().replace(/\s+/g, '-');
     } else if (listId.startsWith('trakt_trending_') || listId.startsWith('trakt_popular_')) {
+      console.log(`[Trakt] Fetching Trakt trending/popular: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         effectiveItemTypeForEndpoint = listId.includes('_movies') ? 'movie' : (listId.includes('_shows') ? 'series' : null);
         if (!effectiveItemTypeForEndpoint) return null; 
         const endpointType = listId.startsWith('trakt_trending_') ? 'trending' : 'popular';
@@ -210,6 +215,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         requestUrl = `${TRAKT_API_URL}/${effectiveItemTypeForEndpoint === 'series' ? 'shows' : 'movies'}/${endpointType}`;
         if (genre && !isMetadataCheck) params.genres = genre.toLowerCase().replace(/\s+/g, '-');
     } else if (listId.startsWith('trakt_')) { 
+      console.log(`[Trakt] Fetching Trakt user list: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         const listSlug = listId.replace('trakt_', '');
         let basePath = `${TRAKT_API_URL}/users/me/lists/${listSlug}/items`;
         if (itemTypeHint === 'movie') { requestUrl = `${basePath}/movies`; effectiveItemTypeForEndpoint = 'movie'; }
@@ -221,8 +227,10 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
       return null;
     }
     if (requestUrl) { 
+        console.log(`[Trakt] Requesting URL: ${requestUrl} with params:`, params);
         const response = await axios.get(requestUrl, { headers, params });
         if (Array.isArray(response.data)) rawTraktEntries = response.data;
+        console.log(`[Trakt] Raw entries received:`, rawTraktEntries.length);
     }
       // Helper to fetch IMDb ID from TMDB if missing
       const axios = require('axios');
@@ -240,6 +248,8 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
       // Map entries, fetch missing IMDb IDs if needed
       const tmdbBearerToken = userConfig.tmdbBearerToken;
       const initialItems = await Promise.all(rawTraktEntries.map(async entry => {
+      // Log each entry for debugging
+      // console.log(`[Trakt] Raw entry:`, entry);
         let itemDataForDetails, resolvedStremioType, listedAt = entry.listed_at;
         const itemTypeFromEntry = entry.type;
         if (itemTypeFromEntry === 'movie' && entry.movie) { resolvedStremioType = 'movie'; itemDataForDetails = entry.movie; }
@@ -279,12 +289,15 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         };
       }));
       const filteredItems = initialItems.filter(item => item !== null);
+      console.log(`[Trakt] Items after mapping/filtering:`, filteredItems.length);
       if (listId === 'trakt_watchlist' && sortBy === 'added' && initialItems.length > 0) {
           initialItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
       }
       const finalResult = { allItems: initialItems, hasMovies: false, hasShows: false };
       initialItems.forEach(item => { if (item.type === 'movie') finalResult.hasMovies = true; else if (item.type === 'series') finalResult.hasShows = true; });
       return finalResult;
+      // Log final result for debugging
+      console.log(`[Trakt] Final result:`, finalResult);
     } catch (error) {
       console.error(`[TraktIntegration] Critical exception in fetchTraktListItems for list ${listId}: ${error.message}`, error.stack); 
       if (error.response) console.error(`[TraktIntegration] Trakt API Error Response: Status ${error.response.status}`, JSON.stringify(error.response.data, null, 2)); 

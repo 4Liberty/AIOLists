@@ -47,6 +47,7 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
   }
   const { apiKey, traktAccessToken, listsMetadata = {}, sortPreferences = {}, importedAddons = {}, rpdbApiKey, randomMDBListUsernames, enableRandomListFeature } = userConfig;
   let itemTypeHintForFetching = (stremioCatalogType === 'movie' || stremioCatalogType === 'series') ? stremioCatalogType : 'all';
+  console.log(`[AIOLists] fetchListContent: listId=${listId}, stremioCatalogType=${stremioCatalogType}, itemTypeHintForFetching=${itemTypeHintForFetching}, skip=${skip}, genre=${genre}`);
   let originalListIdForSortLookup = catalogIdFromRequest;
   const addonDetails = importedAddons?.[catalogIdFromRequest];
   const isUrlImport = addonDetails && (addonDetails.isMDBListUrlImport || addonDetails.isTraktPublicList);
@@ -82,7 +83,9 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
     }
   } else if (isUrlImport) {
     if (addonDetails.isTraktPublicList) {
+      console.log(`[AIOLists] Fetching Trakt public list: id=${addonDetails.id}, user=${addonDetails.traktUser}, itemTypeHint=${itemTypeHintForFetching}`);
       itemsResult = await fetchTraktListItems(addonDetails.id, userConfig, skip, sortPrefs.sort || 'rank', sortPrefs.order || 'asc', true, addonDetails.traktUser, itemTypeHintForFetching, genre);
+      console.log(`[AIOLists] Trakt public list itemsResult:`, itemsResult);
     } else if (addonDetails.isMDBListUrlImport) {
       const isListUserMerged = userConfig.mergedLists?.[catalogIdFromRequest] !== false;
       if (apiKey) {
@@ -107,7 +110,9 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
     if (itemTypeHintForFetching === 'all' && (catalogIdFromRequest.includes("_movies") || catalogIdFromRequest.includes("_shows"))) {
         actualTraktItemTypeHint = catalogIdFromRequest.includes("_movies") ? 'movie' : 'series';
     }
+    console.log(`[AIOLists] Fetching Trakt user list: id=${catalogIdFromRequest}, itemTypeHint=${actualTraktItemTypeHint}`);
     itemsResult = await fetchTraktListItems(catalogIdFromRequest, userConfig, skip, sortPrefs.sort || 'rank', sortPrefs.order || 'asc', false, null, actualTraktItemTypeHint, genre);
+    console.log(`[AIOLists] Trakt user list itemsResult:`, itemsResult);
   } else if (catalogIdFromRequest.startsWith('tmdb_') && userConfig.tmdbSessionId) {
     const { fetchTmdbListItems } = require('../integrations/tmdb');
     itemsResult = await fetchTmdbListItems(catalogIdFromRequest, userConfig, skip, sortPrefs.sort || 'created_at', sortPrefs.order || 'desc', genre);
@@ -119,6 +124,9 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
     itemsResult = await fetchMDBListItems(mdbListOriginalId, apiKey, listsMetadata, skip, sortPrefs.sort || 'default', sortPrefs.order || 'desc', false, genre, null, isListUserMerged, userConfig);
   }
   return itemsResult || null;
+  if (!itemsResult || !itemsResult.allItems || itemsResult.allItems.length === 0) {
+    console.warn(`[AIOLists] No items returned for listId=${listId}, stremioCatalogType=${stremioCatalogType}, itemTypeHint=${itemTypeHintForFetching}`);
+  }
 }
 
 async function createAddon(userConfig) {
