@@ -6,6 +6,7 @@ const { fetchExternalAddonItems } = require('../integrations/externalAddons');
 const { convertToStremioFormat } = require('./converters');
 const { isWatchlist } = require('../utils/common');
 const { staticGenres, MANIFEST_GENERATION_CONCURRENCY, ENABLE_MANIFEST_CACHE } = require('../config');
+const getManifestCatalogName = require('../utils/getManifestCatalogName');
 const axios = require('axios');
 const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
 
