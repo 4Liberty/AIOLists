@@ -1,6 +1,7 @@
 // src/integrations/externalAddons.js
 const axios = require('axios');
 const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
+const { mergeWithDefaultConfig, defaultConfig } = require('../config');
 
 class ExternalAddon {
   constructor(manifestUrl) {
@@ -183,11 +184,15 @@ class ExternalAddon {
 }
 
 async function importExternalAddon(manifestUrl, userConfig) {
+  // Ensure backward compatibility for userConfig
+  const mergedConfig = mergeWithDefaultConfig(userConfig);
   const addon = new ExternalAddon(manifestUrl);
-  return await addon.import(userConfig);
+  return await addon.import(mergedConfig);
 }
 
 async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sourceAddonConfig, skip = 0, rpdbApiKey = null, genre = null, userConfig = null) {
+  // Ensure backward compatibility for userConfig
+  const mergedConfig = mergeWithDefaultConfig(userConfig);
   let attemptedUrl = "Unknown (URL could not be constructed before error)";
   try {
     if (!sourceAddonConfig || !sourceAddonConfig.apiBaseUrl || !sourceAddonConfig.catalogs) {
@@ -207,7 +212,7 @@ async function fetchExternalAddonItems(targetOriginalId, targetOriginalType, sou
     
     // Skip genre filtering at external addon level when using TMDB metadata source
     // This allows TMDB-enriched genre filtering to work properly after enrichment
-    const shouldSkipExternalGenreFilter = userConfig?.metadataSource === 'tmdb' && genre && genre !== 'All';
+    const shouldSkipExternalGenreFilter = mergedConfig?.metadataSource === 'tmdb' && genre && genre !== 'All';
     const genreForExternalAddon = shouldSkipExternalGenreFilter ? null : genre;
     
     if (shouldSkipExternalGenreFilter) {

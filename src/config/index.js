@@ -1,3 +1,30 @@
+/**
+ * Merge a user config object with the defaultConfig, ensuring backward compatibility.
+ * Any missing fields in userConfig are filled from defaultConfig.
+ * @param {object} userConfig
+ * @returns {object} merged config
+ */
+function mergeWithDefaultConfig(userConfig) {
+  if (!userConfig || typeof userConfig !== 'object') return { ...defaultConfig };
+  // Deep merge for nested objects (e.g., listsMetadata, customListNames, etc.)
+  const merged = { ...defaultConfig, ...userConfig };
+  // Merge nested objects if present
+  for (const key of Object.keys(defaultConfig)) {
+    if (
+      typeof defaultConfig[key] === 'object' &&
+      defaultConfig[key] !== null &&
+      !Array.isArray(defaultConfig[key]) &&
+      typeof userConfig[key] === 'object' &&
+      userConfig[key] !== null &&
+      !Array.isArray(userConfig[key])
+    ) {
+      merged[key] = { ...defaultConfig[key], ...userConfig[key] };
+    }
+  }
+  // Handle renamed/legacy fields here if needed (example: legacy field migration)
+  // Example: if (userConfig.oldFieldName && !merged.newFieldName) merged.newFieldName = userConfig.oldFieldName;
+  return merged;
+}
 // src/config/index.js
 const ITEMS_PER_PAGE = 50; // Increased from 20
 const PORT = process.env.PORT || 7000;
@@ -115,4 +142,5 @@ module.exports = {
   MDB_LIST_CONCURRENT_REQUESTS,
   MANIFEST_GENERATION_CONCURRENCY,
   ENABLE_MANIFEST_CACHE
+  ,mergeWithDefaultConfig
 };
