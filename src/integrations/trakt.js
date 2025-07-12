@@ -224,7 +224,22 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         const response = await axios.get(requestUrl, { headers, params });
         if (Array.isArray(response.data)) rawTraktEntries = response.data;
     }
-      const initialItems = rawTraktEntries.map(entry => {
+      // Helper to fetch IMDb ID from TMDB if missing
+      const axios = require('axios');
+      async function getImdbIdFromTmdb(tmdbId, type, tmdbBearerToken) {
+        if (!tmdbId) return null;
+        try {
+          const tmdbType = type === 'series' ? 'tv' : 'movie';
+          const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}`;
+          const headers = { 'Authorization': `Bearer ${tmdbBearerToken || ''}` };
+          const response = await axios.get(url, { headers });
+          return response.data && response.data.imdb_id ? response.data.imdb_id : null;
+        } catch (e) { return null; }
+      }
+
+      // Map entries, fetch missing IMDb IDs if needed
+      const tmdbBearerToken = userConfig.tmdbBearerToken;
+      const initialItems = await Promise.all(rawTraktEntries.map(async entry => {
         let itemDataForDetails, resolvedStremioType, listedAt = entry.listed_at;
         const itemTypeFromEntry = entry.type;
         if (itemTypeFromEntry === 'movie' && entry.movie) { resolvedStremioType = 'movie'; itemDataForDetails = entry.movie; }
@@ -244,9 +259,12 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         }
         if (!itemDataForDetails) return null;
         if (itemTypeHint && itemTypeHint !== 'all' && resolvedStremioType !== itemTypeHint) return null;
-        const imdbId = itemDataForDetails.ids?.imdb;
+        let imdbId = itemDataForDetails.ids?.imdb;
         const tmdbId = itemDataForDetails.ids?.tmdb;
-        // Accept items with either imdbId or tmdbId
+        // Fallback: fetch IMDb ID from TMDB if missing
+        if (!imdbId && tmdbId) {
+          imdbId = await getImdbIdFromTmdb(tmdbId, resolvedStremioType, tmdbBearerToken);
+        }
         if (!imdbId && !tmdbId) return null;
         return {
           imdb_id: imdbId,
@@ -259,7 +277,8 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
           type: resolvedStremioType,
           listed_at: listedAt
         };
-      }).filter(item => item !== null);
+      }));
+      const filteredItems = initialItems.filter(item => item !== null);
       if (listId === 'trakt_watchlist' && sortBy === 'added' && initialItems.length > 0) {
           initialItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
       }
