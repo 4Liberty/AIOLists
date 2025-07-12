@@ -21,7 +21,9 @@ if (FANART_API_KEY) {
 function pickBestImage(images, language, originalLanguage) {
   if (!images || images.length === 0) return null;
   const lang = language.split("-")[0];
+  // Prioritize Turkish ('tr') first, then requested language, then original, then English, then fallback
   return (
+    images.find(i => i.lang === 'tr') ||
     images.find(i => i.lang === lang) ||
     images.find(i => i.lang === originalLanguage) ||
     images.find(i => i.lang === "en") ||
