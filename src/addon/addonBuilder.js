@@ -300,7 +300,16 @@ async function createAddon(userConfig) {
     tempGeneratedCatalogs.push({ id: 'aiolists_anime_search', type: 'anime', name: 'Anime Search', extra: animeSearchCatalogExtra, extraSupported: animeSearchCatalogExtra.map(e => e.name) });
   }
   
-  manifest.catalogs = tempGeneratedCatalogs;
+  // Strip non-essential fields from each catalog entry to minimize manifest size
+  manifest.catalogs = tempGeneratedCatalogs.map(catalog => {
+    const { id, type, name, extra, extraSupported, logo } = catalog;
+    // Only include required and Stremio-supported fields
+    const entry = { id, type, name };
+    if (extra) entry.extra = extra;
+    if (extraSupported) entry.extraSupported = extraSupported;
+    if (logo) entry.logo = logo;
+    return entry;
+  });
   const builder = new addonBuilder(manifest);
 
   builder.defineCatalogHandler(async ({ type, id, extra }) => {
