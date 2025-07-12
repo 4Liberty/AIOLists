@@ -7,7 +7,8 @@ const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const METADATA_BATCH_SIZE = 50; // Increased from 20
 const POSTER_BATCH_SIZE = 50; // Increased from 20
 const TRAKT_CONCURRENT_REQUESTS = 25; // Increased from 8
-const TMDB_CONCURRENT_REQUESTS = 40; // Increased from 20 (TMDB API is very fast)
+// TMDB API: 50 requests/sec, 20 concurrent connections/IP (see https://developers.themoviedb.org/3/getting-started/request-rate-limiting)
+const TMDB_CONCURRENT_REQUESTS = 20; // Set to 20 to match TMDB's connection limit
 const MDB_LIST_CONCURRENT_REQUESTS = 20; // Increased from 5
 const MANIFEST_GENERATION_CONCURRENCY = 20; // Increased from 5
 const ENABLE_MANIFEST_CACHE = true; // Cache manifest to avoid repeated processing
@@ -90,7 +91,7 @@ const defaultConfig = {
     { value: 'random', label: 'Random' },
     { value: 'percentage', label: 'Percentage Watched' },
     { value: 'my_rating', label: 'My Trakt Rating' },
-    { value: 'watched ', label: 'Watched' },
+    { value: 'watched', label: 'Watched' },
     { value: 'collected', label: 'Collected' },
   ]
 };

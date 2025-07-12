@@ -1,5 +1,14 @@
 // src/integrations/tmdb.js
 const axios = require('axios');
+const RateLimiter = require('../utils/rateLimiter');
+// Global TMDB rate limiter: 50 requests/sec
+const tmdbRateLimiter = new RateLimiter({ tokensPerInterval: 50, interval: 1000 });
+
+// Helper to wrap TMDB API calls with rate limiting
+async function tmdbLimitedRequest(fn) {
+  await tmdbRateLimiter.removeToken();
+  return fn();
+}
 const Cache = require('../utils/cache');
 const { ITEMS_PER_PAGE, TMDB_REDIRECT_URI, TMDB_BEARER_TOKEN, TMDB_CONCURRENT_REQUESTS } = require('../config');
 const { getMovieFanart, getSeriesFanart } = require('../utils/getFanartImages');
@@ -13,7 +22,8 @@ const DEFAULT_TMDB_BEARER_TOKEN = TMDB_BEARER_TOKEN;
 async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken = DEFAULT_TMDB_BEARER_TOKEN) {
   if (!items?.length) return {};
   
-  const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 12;
+  // TMDB: 50 requests/sec, 20 concurrent connections/IP. We use 20 for concurrency.
+  const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 20;
   const results = {};
   
   const processChunk = async (chunk) => {
@@ -23,7 +33,6 @@ async function batchFetchTmdbMetadata(items, language = 'en-US', userBearerToken
       try {
         const metadata = await fetchTmdbMetadata(item.tmdbId, item.type, language, userBearerToken);
         if (metadata) {
-          // Preserve the original IMDb ID if it exists from the conversion step.
           metadata.imdb_id = item.imdbId || metadata.imdb_id;
           return { identifier, metadata };
         }
@@ -159,7 +168,8 @@ async function processListItems(items, userConfig, genre) {
   });
   const itemsWithTmdbIds = processedItems.filter(item => item.tmdb_id);
   if (itemsWithTmdbIds.length > 0) {
-    const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 5;
+    // TMDB: 50 requests/sec, 20 concurrent connections/IP. We use 20 for concurrency.
+    const CONCURRENCY_LIMIT = TMDB_CONCURRENT_REQUESTS || 20;
     const chunks = [];
     for (let i = 0; i < itemsWithTmdbIds.length; i += CONCURRENCY_LIMIT) chunks.push(itemsWithTmdbIds.slice(i, i + CONCURRENCY_LIMIT));
     const externalIdsResults = [];
@@ -167,7 +177,7 @@ async function processListItems(items, userConfig, genre) {
       const chunkPromises = chunk.map(async (item) => {
         try {
           const endpoint = item.type === 'movie' ? 'movie' : 'tv';
-          const response = await axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${item.tmdb_id}/external_ids`, { headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userConfig.tmdbBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT });
+          const response = await tmdbLimitedRequest(() => axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${item.tmdb_id}/external_ids`, { headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userConfig.tmdbBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT }));
           return { tmdb_id: item.tmdb_id, imdb_id: response.data?.imdb_id };
         } catch (error) {
           return { tmdb_id: item.tmdb_id, imdb_id: null };
@@ -199,7 +209,7 @@ async function convertImdbToTmdbId(imdbId, userBearerToken = DEFAULT_TMDB_BEARER
   const cachedResult = imdbToTmdbCache.get(cacheKey);
   if (cachedResult) return cachedResult === 'null' ? null : cachedResult;
   try {
-    const response = await axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, { params: { external_source: 'imdb_id' }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken}` }, timeout: TMDB_REQUEST_TIMEOUT });
+    const response = await tmdbLimitedRequest(() => axios.get(`${TMDB_BASE_URL_V3}/find/${imdbId}`, { params: { external_source: 'imdb_id' }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken}` }, timeout: TMDB_REQUEST_TIMEOUT }));
     const data = response.data;
     let result = null;
     if (data.movie_results?.length > 0) result = { tmdbId: data.movie_results[0].id, type: 'movie' };
@@ -219,13 +229,13 @@ async function fetchTmdbMetadata(tmdbId, type, language = 'en-US', userBearerTok
   if (cachedResult) return cachedResult === 'null' ? null : cachedResult;
   try {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
-    const response = await axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${tmdbId}`, { params: { language, append_to_response: 'credits,videos,external_ids,images' }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT });
+    const response = await tmdbLimitedRequest(() => axios.get(`${TMDB_BASE_URL_V3}/${endpoint}/${tmdbId}`, { params: { language, append_to_response: 'credits,videos,external_ids,images' }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT }));
     const data = response.data;
     if (type === 'series' && data.seasons && data.seasons.length > 0) {
       try {
         const seasonPromises = data.seasons.map(season => {
           if (season.episode_count > 0 && season.season_number >= 0) {
-            return axios.get(`${TMDB_BASE_URL_V3}/tv/${tmdbId}/season/${season.season_number}`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT }).catch(e => null);
+            return tmdbLimitedRequest(() => axios.get(`${TMDB_BASE_URL_V3}/tv/${tmdbId}/season/${season.season_number}`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken || DEFAULT_TMDB_BEARER_TOKEN}` }, timeout: TMDB_REQUEST_TIMEOUT })).catch(e => null);
           }
           return null;
         }).filter(Boolean);
@@ -303,8 +313,8 @@ async function fetchTmdbGenres(language = 'en-US', userBearerToken = DEFAULT_TMD
   if (cachedGenres) return cachedGenres === 'null' ? [] : cachedGenres;
   try {
     const [movieResponse, tvResponse] = await Promise.all([
-      axios.get(`${TMDB_BASE_URL_V3}/genre/movie/list`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken}` }, timeout: TMDB_REQUEST_TIMEOUT }),
-      axios.get(`${TMDB_BASE_URL_V3}/genre/tv/list`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken}` }, timeout: TMDB_REQUEST_TIMEOUT })
+      tmdbLimitedRequest(() => axios.get(`${TMDB_BASE_URL_V3}/genre/movie/list`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken}` }, timeout: TMDB_REQUEST_TIMEOUT })),
+      tmdbLimitedRequest(() => axios.get(`${TMDB_BASE_URL_V3}/genre/tv/list`, { params: { language }, headers: { 'accept': 'application/json', 'Authorization': `Bearer ${userBearerToken}` }, timeout: TMDB_REQUEST_TIMEOUT }))
     ]);
     const genreMap = new Map();
     [...(movieResponse.data.genres || []), ...(tvResponse.data.genres || [])].forEach(genre => {
@@ -323,6 +333,35 @@ function clearTmdbCaches() {
   tmdbCache.clear();
   imdbToTmdbCache.clear();
 }
+
+/**
+ * Batch convert an array of IMDb IDs to TMDB IDs with concurrency control.
+ * @param {string[]} imdbIds - Array of IMDb IDs (e.g., ['tt1234567', ...])
+ * @param {string} userBearerToken - Optional TMDB Bearer Token
+ * @param {number} concurrency - Max number of concurrent requests (default: TMDB_CONCURRENT_REQUESTS or 20)
+ * @returns {Promise<Array<{ imdbId: string, tmdbId: number|null, type: string|null }>>}
+ */
+async function batchConvertImdbToTmdbIds(imdbIds, userBearerToken = DEFAULT_TMDB_BEARER_TOKEN, concurrency = TMDB_CONCURRENT_REQUESTS || 20) {
+  if (!Array.isArray(imdbIds) || imdbIds.length === 0) return [];
+  const results = [];
+  let index = 0;
+  async function worker() {
+    while (index < imdbIds.length) {
+      const current = index++;
+      const imdbId = imdbIds[current];
+      try {
+        const result = await convertImdbToTmdbId(imdbId, userBearerToken);
+        results[current] = { imdbId, tmdbId: result ? result.tmdbId : null, type: result ? result.type : null };
+      } catch (e) {
+        results[current] = { imdbId, tmdbId: null, type: null };
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, imdbIds.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 module.exports = {
   createTmdbRequestToken,
   createTmdbSession,
