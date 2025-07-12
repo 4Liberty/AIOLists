@@ -182,7 +182,24 @@ async function createAddon(userConfig) {
     let displayName = getManifestCatalogName(currentListId, listSourceInfo.name, customListNames);
     const catalogExtra = [{ name: "skip" }];
     if (includeGenresInManifest) catalogExtra.push({ name: "genre", options: availableGenres, isRequired: false });
-    const baseProps = { extra: catalogExtra, extraSupported: catalogExtra.map(e => e.name) };
+    let logoUrl = undefined;
+    // Attempt to fetch a logo for movie catalogs (discovery page)
+    if (listSourceInfo.source === 'tmdb' && listSourceInfo.type === 'movie' && listSourceInfo.originalId) {
+      try {
+        const { fetchTmdbListItems } = require('../integrations/tmdb');
+        const tmdbListResult = await fetchTmdbListItems(listSourceInfo.originalId, userConfig, 0, 'created_at', 'desc');
+        if (tmdbListResult && tmdbListResult.allItems && tmdbListResult.allItems.length > 0) {
+          // Use the first movie's poster or logo as the catalog logo
+          const firstItem = tmdbListResult.allItems.find(i => i.poster || i.logo);
+          if (firstItem) {
+            logoUrl = firstItem.logo || firstItem.poster;
+          }
+        }
+      } catch (e) {
+        // Fallback: ignore logo if fetch fails
+      }
+    }
+    const baseProps = { extra: catalogExtra, extraSupported: catalogExtra.map(e => e.name), ...(logoUrl ? { logo: logoUrl } : {}) };
 
     // --- START OF SIMPLIFIED LOGIC ---
     // Trust the hasMovies and hasShows flags from the initial fetch.
