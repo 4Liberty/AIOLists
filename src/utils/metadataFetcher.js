@@ -149,6 +149,28 @@ async function enrichItemsWithCinemeta(items) {
   });
 }
 
+
+// Fetches Cinemeta metadata for a batch of IMDb IDs
+async function fetchCinemetaChunk(imdbIds, type) {
+  if (!imdbIds || imdbIds.length === 0) return {};
+  try {
+    // Cinemeta supports batch queries via comma-separated imdb_id param
+    const url = `${CINEMETA_BASE}/meta/${type}.json?imdb_id=${imdbIds.join(',')}`;
+    const response = await axios.get(url, { timeout: 8000 });
+    if (response.data && Array.isArray(response.data.metas)) {
+      // Map by imdb_id for fast lookup
+      const metaMap = {};
+      for (const meta of response.data.metas) {
+        if (meta.imdb_id) metaMap[meta.imdb_id] = meta;
+      }
+      return metaMap;
+    }
+    return {};
+  } catch (error) {
+    throw new Error(error.message || 'Cinemeta fetch failed');
+  }
+}
+
 async function fetchCinemetaBatched(imdbIds, type) {
   if (!imdbIds || imdbIds.length === 0) return {};
   const allMetadata = {};

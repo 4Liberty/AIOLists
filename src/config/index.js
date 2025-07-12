@@ -62,7 +62,7 @@ const defaultConfig = {
   tmdbAccountId: '',
   tmdbUsername: '',
   metadataSource: 'cinemeta',
-  tmdbLanguage: '',
+  tmdbLanguage: 'tr',
   traktAccessToken: '',
   traktRefreshToken: '',
   traktExpiresAt: null,
