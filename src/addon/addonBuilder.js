@@ -356,7 +356,27 @@ async function createAddon(userConfig) {
         return Promise.resolve({ metas: [] });
       }
     }
-    const itemsResult = await fetchListContent(id, userConfig, skip, genre, type); 
+    // Map localized/custom types to standard Stremio types
+let stremioCatalogType = type;
+if (typeof stremioCatalogType === 'string') {
+  const t = stremioCatalogType.toLowerCase();
+  if (t === 'movie' || t === 'movies' || t.includes('film')) {
+    stremioCatalogType = 'movie';
+  } else if (t === 'series' || t === 'show' || t === 'shows' || t.includes('dizi')) {
+    stremioCatalogType = 'series';
+  } else if (t === 'all' || t === 'hepsi') {
+    stremioCatalogType = 'all';
+  } else if (t === 'anime') {
+    stremioCatalogType = 'anime';
+  } else if (t === 'search') {
+    stremioCatalogType = 'search';
+  } else {
+    stremioCatalogType = 'all';
+  }
+} else {
+  stremioCatalogType = 'all';
+}
+const itemsResult = await fetchListContent(id, userConfig, skip, genre, stremioCatalogType);
     if (!itemsResult || !itemsResult.allItems) return Promise.resolve({ metas: [] });
     const enrichedItems = await enrichItemsWithMetadata(itemsResult.allItems, userConfig);
     const enrichedResult = { ...itemsResult, allItems: enrichedItems };
