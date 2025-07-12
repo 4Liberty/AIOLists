@@ -172,6 +172,8 @@ async function createAddon(userConfig) {
     if (includeGenresInManifest) randomCatalogExtra.push({ name: "genre", options: availableGenres, isRequired: false });
     tempGeneratedCatalogs.push({ id: randomCatalogId, type: customMediaTypeNames?.[randomCatalogId] || 'all', name: randomCatalogDisplayName, extra: randomCatalogExtra, extraSupported: randomCatalogExtra.map(e => e.name) });
   }
+  // Debug: log all generated catalogs before mapping
+  console.log('[AIOLists] tempGeneratedCatalogs:', JSON.stringify(tempGeneratedCatalogs, null, 2));
   let activeListsInfo = [];
   if (apiKey) activeListsInfo.push(...(await fetchAllMDBLists(apiKey)).map(l => ({ ...l, source: 'mdblist', originalId: String(l.id) })));
   if (traktAccessToken) activeListsInfo.push(...(await fetchTraktLists(userConfig)).map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
@@ -318,6 +320,8 @@ async function createAddon(userConfig) {
     if (logo) entry.logo = logo;
     return entry;
   });
+  // Debug: log manifest after mapping
+  console.log('[AIOLists] manifest.catalogs:', JSON.stringify(manifest.catalogs, null, 2));
   const builder = new addonBuilder(manifest);
 
   builder.defineCatalogHandler(async ({ type, id, extra }) => {
