@@ -169,14 +169,35 @@ async function fetchPublicTraktListDetails(traktListUrl) {
     }
 }
 async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank', sortOrder = 'asc', isPublicImport = false, publicUsername = null, itemTypeHint = null, genre = null, isMetadataCheck = false) {
-  if (!listId) return null;
+  if (!listId) {
+    console.error(`[Trakt] No listId provided`);
+    return { allItems: [], hasMovies: false, hasShows: false };
+  }
+  
   console.log(`[Trakt] fetchTraktListItems called: listId=${listId}, skip=${skip}, sortBy=${sortBy}, sortOrder=${sortOrder}, isPublicImport=${isPublicImport}, publicUsername=${publicUsername}, itemTypeHint=${itemTypeHint}, genre=${genre}, isMetadataCheck=${isMetadataCheck}`);
+  
+  // Validate configuration
+  if (!userConfig) {
+    console.error(`[Trakt] No userConfig provided`);
+    return { allItems: [], hasMovies: false, hasShows: false };
+  }
+  
+  if (!isPublicImport && !userConfig.traktAccessToken) {
+    console.error(`[Trakt] No Trakt access token available for private list access`);
+    return { allItems: [], hasMovies: false, hasShows: false };
+  }
   const limit = isMetadataCheck ? 1 : ITEMS_PER_PAGE;
   const page = isMetadataCheck ? 1 : Math.floor(skip / limit) + 1;
   const headers = { 'Content-Type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': TRAKT_CLIENT_ID };
   if (!isPublicImport) {
-    if (!await initTraktApi(userConfig)) return null;
+    console.log(`[Trakt] Initializing Trakt API for user access`);
+    const initResult = await initTraktApi(userConfig);
+    if (!initResult) {
+      console.error(`[Trakt] Failed to initialize Trakt API for user access`);
+      return { allItems: [], hasMovies: false, hasShows: false };
+    }
     headers['Authorization'] = `Bearer ${userConfig.traktAccessToken}`;
+    console.log(`[Trakt] Trakt API initialized successfully`);
   }
   let requestUrl, params = { limit, page, extended: 'full' }, rawTraktEntries = [], effectiveItemTypeForEndpoint = itemTypeHint;
   try {
@@ -234,25 +255,47 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
     }
       // Helper to fetch IMDb ID from TMDB if missing
       async function getImdbIdFromTmdb(tmdbId, type, tmdbBearerToken) {
-        if (!tmdbId || !tmdbBearerToken) return null;
+        if (!tmdbId) {
+          console.warn(`[Trakt] No TMDB ID provided for IMDb lookup`);
+          return null;
+        }
+        if (!tmdbBearerToken) {
+          console.warn(`[Trakt] No TMDB Bearer Token available for IMDb lookup`);
+          return null;
+        }
         try {
           const tmdbType = type === 'series' ? 'tv' : 'movie';
           const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}`;
           const headers = { 'Authorization': `Bearer ${tmdbBearerToken}` };
+          console.log(`[Trakt] Fetching IMDb ID from TMDB: ${url}`);
           const response = await axios.get(url, { headers, timeout: 10000 });
           const imdbId = response.data?.imdb_id;
-          return imdbId && imdbId.startsWith('tt') ? imdbId : (imdbId ? `tt${imdbId}` : null);
+          const finalImdbId = imdbId && imdbId.startsWith('tt') ? imdbId : (imdbId ? `tt${imdbId}` : null);
+          console.log(`[Trakt] TMDB response for ${tmdbId}: IMDb ID = ${finalImdbId}`);
+          return finalImdbId;
         } catch (e) { 
           console.warn(`[Trakt] Failed to fetch IMDb ID from TMDB for ${tmdbId}:`, e.message);
+          if (e.response) {
+            console.warn(`[Trakt] TMDB API Error: Status ${e.response.status}`, e.response.data);
+          }
           return null; 
         }
       }
 
       // Map entries, fetch missing IMDb IDs if needed
-      const tmdbBearerToken = userConfig.tmdbBearerToken || require('../config').TMDB_BEARER_TOKEN;
-      const initialItems = await Promise.all(rawTraktEntries.map(async entry => {
+      const tmdbBearerToken = userConfig.tmdbBearerToken || process.env.TMDB_BEARER_TOKEN || require('../config').TMDB_BEARER_TOKEN;
+      console.log(`[Trakt] Using TMDB Bearer Token: ${tmdbBearerToken ? 'YES' : 'NO'}`);
+      const initialItems = await Promise.all(rawTraktEntries.map(async (entry, index) => {
       // Log each entry for debugging
-      // console.log(`[Trakt] Raw entry:`, entry);
+      console.log(`[Trakt] Processing entry ${index + 1}/${rawTraktEntries.length}:`, {
+        type: entry.type,
+        hasMovie: !!entry.movie,
+        hasShow: !!entry.show,
+        movieTitle: entry.movie?.title,
+        showTitle: entry.show?.title,
+        movieIds: entry.movie?.ids,
+        showIds: entry.show?.ids
+      });
         let itemDataForDetails, resolvedStremioType, listedAt = entry.listed_at;
         const itemTypeFromEntry = entry.type;
         if (itemTypeFromEntry === 'movie' && entry.movie) { resolvedStremioType = 'movie'; itemDataForDetails = entry.movie; }
@@ -270,26 +313,40 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
               else return null;
            } else return null;
         }
-        if (!itemDataForDetails) return null;
-        if (itemTypeHint && itemTypeHint !== 'all' && resolvedStremioType !== itemTypeHint) return null;
+        if (!itemDataForDetails) {
+          console.warn(`[Trakt] No item data found for entry ${index + 1}, skipping`);
+          return null;
+        }
+        if (itemTypeHint && itemTypeHint !== 'all' && resolvedStremioType !== itemTypeHint) {
+          console.log(`[Trakt] Item type mismatch: expected ${itemTypeHint}, got ${resolvedStremioType}, skipping`);
+          return null;
+        }
         let imdbId = itemDataForDetails.ids?.imdb;
         const tmdbId = itemDataForDetails.ids?.tmdb;
+        
+        console.log(`[Trakt] Item ${index + 1} IDs: imdb=${imdbId}, tmdb=${tmdbId}`);
         
         // Ensure IMDb ID has tt prefix
         if (imdbId && !imdbId.startsWith('tt')) {
           imdbId = `tt${imdbId}`;
+          console.log(`[Trakt] Fixed IMDb ID format: ${imdbId}`);
         }
         
         // Fallback: fetch IMDb ID from TMDB if missing
         if (!imdbId && tmdbId) {
+          console.log(`[Trakt] Fetching missing IMDb ID from TMDB for ${tmdbId}`);
           imdbId = await getImdbIdFromTmdb(tmdbId, resolvedStremioType, tmdbBearerToken);
         }
-        if (!imdbId && !tmdbId) return null;
+        
+        if (!imdbId && !tmdbId) {
+          console.warn(`[Trakt] No valid IDs found for item ${index + 1}, skipping`);
+          return null;
+        }
         
         // Determine the primary ID to use
         let primaryId = imdbId || `tmdb:${tmdbId}`;
         
-        return {
+        const finalItem = {
           id: primaryId,
           imdb_id: imdbId,
           tmdb_id: tmdbId,
@@ -303,6 +360,15 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
           type: resolvedStremioType,
           listed_at: listedAt
         };
+        
+        console.log(`[Trakt] Final item ${index + 1}:`, {
+          id: finalItem.id,
+          title: finalItem.title,
+          type: finalItem.type,
+          year: finalItem.year
+        });
+        
+        return finalItem;
       }));
       const filteredItems = initialItems.filter(item => item !== null);
       console.log(`[Trakt] Items after mapping/filtering:`, filteredItems.length);
@@ -314,9 +380,14 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
       console.log(`[Trakt] Final result:`, finalResult);
       return finalResult;
     } catch (error) {
-      console.error(`[TraktIntegration] Critical exception in fetchTraktListItems for list ${listId}: ${error.message}`, error.stack); 
-      if (error.response) console.error(`[TraktIntegration] Trakt API Error Response: Status ${error.response.status}`, JSON.stringify(error.response.data, null, 2)); 
-      return null;
+      console.error(`[TraktIntegration] Critical exception in fetchTraktListItems for list ${listId}: ${error.message}`); 
+      console.error(`[TraktIntegration] Stack trace:`, error.stack);
+      if (error.response) {
+        console.error(`[TraktIntegration] Trakt API Error Response: Status ${error.response.status}`);
+        console.error(`[TraktIntegration] Response Data:`, JSON.stringify(error.response.data, null, 2));
+      }
+      // Return empty structure instead of null to prevent downstream issues
+      return { allItems: [], hasMovies: false, hasShows: false };
     }
 }
 async function fetchTraktMetadata(imdbId, type) {

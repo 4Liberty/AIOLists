@@ -4,17 +4,18 @@ const axios = require("axios");
 const { TMDB_BEARER_TOKEN } = require("../config");
 
 const FANART_API_KEY = process.env.FANART_API_KEY ? process.env.FANART_API_KEY.trim() : null;
+console.log(`[Fanart] FANART_API_KEY availability: ${FANART_API_KEY ? 'YES' : 'NO'}`);
 
 let fanart = null;
 if (FANART_API_KEY) {
   try {
     fanart = new FanartTvApi({ apiKey: FANART_API_KEY });
-    console.log("Fanart.tv API client initialized successfully.");
+    console.log("[Fanart] Fanart.tv API client initialized successfully.");
   } catch (e) {
-    console.error("ERROR: Failed to initialize Fanart.tv API client:", e.message);
+    console.error("[Fanart] ERROR: Failed to initialize Fanart.tv API client:", e.message);
   }
 } else {
-  console.warn("WARNING: FANART_API_KEY is not set. Fanart.tv images will be unavailable.");
+  console.warn("[Fanart] WARNING: FANART_API_KEY is not set. Fanart.tv images will be unavailable.");
 }
 
 // Helper to pick the best image based on language
@@ -59,15 +60,19 @@ async function getSeriesFanart(tvdbId, tmdbId, language, originalLanguage) {
   let finalTvdbId = tvdbId;
 
   // Fallback to fetch tvdb_id from TMDB if it's missing
-  if (!finalTvdbId && tmdbId && (process.env.TMDB_BEARER_TOKEN || TMDB_BEARER_TOKEN)) {
+  if (!finalTvdbId && tmdbId) {
     try {
       const token = process.env.TMDB_BEARER_TOKEN || TMDB_BEARER_TOKEN;
-      const response = await axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`, {
-        headers: { 'accept': 'application/json', 'Authorization': `Bearer ${token}` },
-        timeout: 3000
-      });
-      if (response.data?.tvdb_id) {
-        finalTvdbId = response.data.tvdb_id;
+      console.log(`[Fanart] Using TMDB Bearer Token for tvdb_id lookup: ${token ? 'YES' : 'NO'}`);
+      if (token) {
+        const response = await axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`, {
+          headers: { 'accept': 'application/json', 'Authorization': `Bearer ${token}` },
+          timeout: 3000
+        });
+        if (response.data?.tvdb_id) {
+          finalTvdbId = response.data.tvdb_id;
+          console.log(`[Fanart] Retrieved tvdb_id ${finalTvdbId} for tmdbId ${tmdbId}`);
+        }
       }
     } catch (error) {
       console.warn(`[Fanart] Could not fetch tvdb_id for tmdbId: ${tmdbId}.`, error.message);

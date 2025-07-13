@@ -57,7 +57,7 @@ const staticGenres = [
 const defaultConfig = {
   apiKey: '',
   rpdbApiKey: '',
-  tmdbBearerToken: TMDB_BEARER_TOKEN, // Use env var if set
+  tmdbBearerToken: process.env.TMDB_BEARER_TOKEN || TMDB_BEARER_TOKEN || '', // Ensure env var is properly used
   tmdbSessionId: '',
   tmdbAccountId: '',
   tmdbUsername: '',
