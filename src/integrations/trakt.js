@@ -233,20 +233,23 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         console.log(`[Trakt] Raw entries received:`, rawTraktEntries.length);
     }
       // Helper to fetch IMDb ID from TMDB if missing
-      const axios = require('axios');
       async function getImdbIdFromTmdb(tmdbId, type, tmdbBearerToken) {
-        if (!tmdbId) return null;
+        if (!tmdbId || !tmdbBearerToken) return null;
         try {
           const tmdbType = type === 'series' ? 'tv' : 'movie';
           const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}`;
-          const headers = { 'Authorization': `Bearer ${tmdbBearerToken || ''}` };
-          const response = await axios.get(url, { headers });
-          return response.data && response.data.imdb_id ? response.data.imdb_id : null;
-        } catch (e) { return null; }
+          const headers = { 'Authorization': `Bearer ${tmdbBearerToken}` };
+          const response = await axios.get(url, { headers, timeout: 10000 });
+          const imdbId = response.data?.imdb_id;
+          return imdbId && imdbId.startsWith('tt') ? imdbId : (imdbId ? `tt${imdbId}` : null);
+        } catch (e) { 
+          console.warn(`[Trakt] Failed to fetch IMDb ID from TMDB for ${tmdbId}:`, e.message);
+          return null; 
+        }
       }
 
       // Map entries, fetch missing IMDb IDs if needed
-      const tmdbBearerToken = userConfig.tmdbBearerToken;
+      const tmdbBearerToken = userConfig.tmdbBearerToken || require('../config').TMDB_BEARER_TOKEN;
       const initialItems = await Promise.all(rawTraktEntries.map(async entry => {
       // Log each entry for debugging
       // console.log(`[Trakt] Raw entry:`, entry);
@@ -271,17 +274,30 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         if (itemTypeHint && itemTypeHint !== 'all' && resolvedStremioType !== itemTypeHint) return null;
         let imdbId = itemDataForDetails.ids?.imdb;
         const tmdbId = itemDataForDetails.ids?.tmdb;
+        
+        // Ensure IMDb ID has tt prefix
+        if (imdbId && !imdbId.startsWith('tt')) {
+          imdbId = `tt${imdbId}`;
+        }
+        
         // Fallback: fetch IMDb ID from TMDB if missing
         if (!imdbId && tmdbId) {
           imdbId = await getImdbIdFromTmdb(tmdbId, resolvedStremioType, tmdbBearerToken);
         }
         if (!imdbId && !tmdbId) return null;
+        
+        // Determine the primary ID to use
+        let primaryId = imdbId || `tmdb:${tmdbId}`;
+        
         return {
+          id: primaryId,
           imdb_id: imdbId,
           tmdb_id: tmdbId,
           title: itemDataForDetails.title,
+          name: itemDataForDetails.title, // Add name field for compatibility
           year: itemDataForDetails.year,
           overview: itemDataForDetails.overview,
+          description: itemDataForDetails.overview, // Add description field for compatibility
           genres: itemDataForDetails.genres,
           runtime: itemDataForDetails.runtime,
           type: resolvedStremioType,

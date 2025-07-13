@@ -35,6 +35,7 @@ async function enrichItemsWithMetadata(items, userConfig) {
     baseEnrichedItems.map(async (item) => {
       if (!item.imdb_id && !item.tmdbId) return item;
 
+      console.log(`[MetadataFetcher] Processing item: ${item.id}, type: ${item.type}, tmdbId: ${item.tmdbId}`);
       let fanartImages = {};
       if (item.type === 'movie') {
         fanartImages = await getMovieFanart(item.tmdbId, tmdbLanguage, item.original_language);
@@ -42,9 +43,11 @@ async function enrichItemsWithMetadata(items, userConfig) {
         fanartImages = await getSeriesFanart(item.tvdb_id, item.tmdbId, tmdbLanguage, item.original_language);
       }
 
+      console.log(`[MetadataFetcher] Fanart images for ${item.id}:`, fanartImages);
       item.logo = fanartImages.logo || item.tmdb_logo || item.logo;
       item.background = fanartImages.background || item.background;
       item.poster = fanartImages.poster || item.poster;
+      console.log(`[MetadataFetcher] Final item logo for ${item.id}: ${item.logo}`);
 
       return item;
     })

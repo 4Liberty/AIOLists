@@ -113,9 +113,14 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
     console.log(`[AIOLists] Fetching Trakt user list: id=${catalogIdFromRequest}, itemTypeHint=${actualTraktItemTypeHint}`);
     itemsResult = await fetchTraktListItems(catalogIdFromRequest, userConfig, skip, sortPrefs.sort || 'rank', sortPrefs.order || 'asc', false, null, actualTraktItemTypeHint, genre);
     console.log(`[AIOLists] Trakt user list itemsResult:`, itemsResult);
+    if (itemsResult && itemsResult.allItems) {
+      console.log(`[AIOLists] Trakt items sample:`, itemsResult.allItems.slice(0, 2));
+    }
   } else if (catalogIdFromRequest.startsWith('tmdb_') && userConfig.tmdbSessionId) {
     const { fetchTmdbListItems } = require('../integrations/tmdb');
-    itemsResult = await fetchTmdbListItems(catalogIdFromRequest, userConfig, skip, sortPrefs.sort || 'created_at', sortPrefs.order || 'desc', genre);
+    // Remove the tmdb_ prefix to get the actual TMDB list ID
+    const actualTmdbListId = catalogIdFromRequest.replace('tmdb_', '');
+    itemsResult = await fetchTmdbListItems(actualTmdbListId, userConfig, skip, sortPrefs.sort || 'created_at', sortPrefs.order || 'desc', genre);
   } else if (apiKey && catalogIdFromRequest.startsWith('aiolists-')) {
     const match = catalogIdFromRequest.match(/^aiolists-([^-]+(?:-[^-]+)*)-([ELW])$/);
     let mdbListOriginalId = match ? match[1] : catalogIdFromRequest.replace(/^aiolists-/, '').replace(/-[ELW]$/, '');
@@ -178,7 +183,12 @@ async function createAddon(userConfig) {
   console.log('[AIOLists] tempGeneratedCatalogs:', JSON.stringify(tempGeneratedCatalogs, null, 2));
   let activeListsInfo = [];
   if (apiKey) activeListsInfo.push(...(await fetchAllMDBLists(apiKey)).map(l => ({ ...l, source: 'mdblist', originalId: String(l.id) })));
-  if (traktAccessToken) activeListsInfo.push(...(await fetchTraktLists(userConfig)).map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
+  if (traktAccessToken) {
+    console.log(`[AIOLists] Fetching Trakt lists...`);
+    const traktLists = await fetchTraktLists(userConfig);
+    console.log(`[AIOLists] Trakt lists received:`, traktLists.length);
+    activeListsInfo.push(...traktLists.map(l => ({ ...l, source: 'trakt', originalId: String(l.id) })));
+  }
   if (userConfig.tmdbSessionId && userConfig.tmdbAccountId) {
     try {
       const { fetchTmdbLists } = require('../integrations/tmdb');
@@ -190,7 +200,11 @@ async function createAddon(userConfig) {
   }
   
   const processListForManifest = async (listSourceInfo, currentListId, isImportedSubCatalog = false) => {
-    if (removedListsSet.has(currentListId) || hiddenListsSet.has(currentListId)) return;
+    console.log(`[AIOLists] Processing list for manifest: ${currentListId}, source: ${listSourceInfo.source}, type: ${listSourceInfo.type}`);
+    if (removedListsSet.has(currentListId) || hiddenListsSet.has(currentListId)) {
+      console.log(`[AIOLists] Skipping hidden/removed list: ${currentListId}`);
+      return;
+    }
 
     let displayName = getManifestCatalogName(currentListId, listSourceInfo.name, customListNames);
     const catalogExtra = [{ name: "skip" }];
@@ -199,22 +213,26 @@ async function createAddon(userConfig) {
     // Attempt to fetch a logo for movie catalogs (discovery page)
     if (listSourceInfo.source === 'tmdb' && listSourceInfo.type === 'movie' && listSourceInfo.originalId) {
       try {
+        console.log(`[AddonBuilder] Fetching logo for catalog ${currentListId}, TMDB list ${listSourceInfo.originalId}`);
         const { fetchTmdbListItems } = require('../integrations/tmdb');
         const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
         const tmdbListResult = await fetchTmdbListItems(listSourceInfo.originalId, userConfig, 0, 'created_at', 'desc');
         if (tmdbListResult && tmdbListResult.allItems && tmdbListResult.allItems.length > 0) {
           // Enrich the first item with metadata to get logo from Fanart.tv
           const firstItem = tmdbListResult.allItems[0];
+          console.log(`[AddonBuilder] First item for logo:`, firstItem);
           if (firstItem) {
             const enrichedItems = await enrichItemsWithMetadata([firstItem], userConfig);
             const enrichedFirstItem = enrichedItems[0];
+            console.log(`[AddonBuilder] Enriched first item:`, enrichedFirstItem);
             if (enrichedFirstItem && enrichedFirstItem.logo) {
               logoUrl = enrichedFirstItem.logo;
+              console.log(`[AddonBuilder] Logo URL found: ${logoUrl}`);
             }
           }
         }
       } catch (e) {
-        // Fallback: ignore logo if fetch fails
+        console.error(`[AddonBuilder] Error fetching logo for catalog ${currentListId}:`, e.message);
       }
     }
     const baseProps = { extra: catalogExtra, extraSupported: catalogExtra.map(e => e.name), ...(logoUrl ? { logo: logoUrl } : {}) };
@@ -351,11 +369,14 @@ async function createAddon(userConfig) {
       } else if (t === 'search') {
         stremioCatalogType = 'search';
       } else {
+        // For any unknown type, try to infer from context or default to 'all'
         stremioCatalogType = 'all';
       }
     } else {
       stremioCatalogType = 'all';
     }
+    
+    console.log(`[AIOLists] Catalog handler: id=${id}, originalType=${type}, mappedType=${stremioCatalogType}, skip=${skip}, genre=${genre}`);
 
     if ((id.includes('_search')) && searchQuery) {      
       if (!searchQuery || searchQuery.trim().length < 2) return Promise.resolve({ metas: [] });
@@ -386,18 +407,26 @@ async function createAddon(userConfig) {
       }
     }
     const itemsResult = await fetchListContent(id, userConfig, skip, genre, stremioCatalogType);
+    console.log(`[AIOLists] fetchListContent result for ${id}:`, itemsResult ? `${itemsResult.allItems?.length || 0} items` : 'null');
     if (!itemsResult || !itemsResult.allItems) return Promise.resolve({ metas: [] });
     const enrichedItems = await enrichItemsWithMetadata(itemsResult.allItems, userConfig);
+    console.log(`[AIOLists] Enriched items for ${id}:`, enrichedItems.length);
     const enrichedResult = { ...itemsResult, allItems: enrichedItems };
     const metadataConfig = { metadataSource: userConfig.metadataSource || 'cinemeta', tmdbLanguage: userConfig.tmdbLanguage || 'en-US' };
     let metas = await convertToStremioFormat(enrichedResult, userConfig.rpdbApiKey, metadataConfig);
+    console.log(`[AIOLists] Converted metas for ${id}:`, metas.length);
     if (stremioCatalogType === 'movie' || stremioCatalogType === 'series') {
+        const beforeFilter = metas.length;
         metas = metas.filter(meta => meta.type === stremioCatalogType);
+        console.log(`[AIOLists] Type filtering for ${id}: ${beforeFilter} -> ${metas.length} (type: ${stremioCatalogType})`);
     }
     if (genre && genre !== 'All' && metas.length > 0) {
+        const beforeGenreFilter = metas.length;
         metas = metas.filter(meta => meta.genres?.some(g => String(g).toLowerCase() === String(genre).toLowerCase()));
+        console.log(`[AIOLists] Genre filtering for ${id}: ${beforeGenreFilter} -> ${metas.length} (genre: ${genre})`);
     }
     const cacheMaxAge = (id === 'random_mdblist_catalog' || isWatchlist(id)) ? 0 : (5 * 60);
+    console.log(`[AIOLists] Final result for ${id}:`, metas.length, 'items');
     return Promise.resolve({ metas, cacheMaxAge });
   });
 

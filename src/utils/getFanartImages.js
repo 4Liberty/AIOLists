@@ -33,17 +33,20 @@ function pickBestImage(images, language, originalLanguage) {
 
 // Fetches all relevant images for a movie from Fanart.tv
 async function getMovieFanart(tmdbId, language, originalLanguage) {
+  console.log(`[Fanart] getMovieFanart called: tmdbId=${tmdbId}, language=${language}, fanartAvailable=${!!fanart}`);
   if (!fanart || !tmdbId) return {};
 
   try {
     const res = await fanart.getMovieImages(tmdbId);
+    console.log(`[Fanart] Movie images for ${tmdbId}:`, Object.keys(res));
     const logo = pickBestImage(res.hdmovielogo, language, originalLanguage)?.url;
     const background = pickBestImage(res.moviebackground, language, originalLanguage)?.url;
     const poster = pickBestImage(res.movieposter, language, originalLanguage)?.url;
+    console.log(`[Fanart] Movie ${tmdbId} - logo: ${logo}, background: ${background}, poster: ${poster}`);
     return { logo, background, poster };
   } catch (error) {
     if (error.message.includes('404')) {
-        // This is a normal occurrence for items not found on Fanart.tv
+        console.log(`[Fanart] Movie ${tmdbId} not found on Fanart.tv (404)`);
     } else {
         console.error(`Error fetching movie fanart for tmdbId: ${tmdbId}:`, error.message);
     }
