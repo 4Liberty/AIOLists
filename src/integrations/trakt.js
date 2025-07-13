@@ -290,14 +290,13 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
       }));
       const filteredItems = initialItems.filter(item => item !== null);
       console.log(`[Trakt] Items after mapping/filtering:`, filteredItems.length);
-      if (listId === 'trakt_watchlist' && sortBy === 'added' && initialItems.length > 0) {
-          initialItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
+      if (listId === 'trakt_watchlist' && sortBy === 'added' && filteredItems.length > 0) {
+          filteredItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
       }
-      const finalResult = { allItems: initialItems, hasMovies: false, hasShows: false };
-      initialItems.forEach(item => { if (item.type === 'movie') finalResult.hasMovies = true; else if (item.type === 'series') finalResult.hasShows = true; });
-      return finalResult;
-      // Log final result for debugging
+      const finalResult = { allItems: filteredItems, hasMovies: false, hasShows: false };
+      filteredItems.forEach(item => { if (item.type === 'movie') finalResult.hasMovies = true; else if (item.type === 'series') finalResult.hasShows = true; });
       console.log(`[Trakt] Final result:`, finalResult);
+      return finalResult;
     } catch (error) {
       console.error(`[TraktIntegration] Critical exception in fetchTraktListItems for list ${listId}: ${error.message}`, error.stack); 
       if (error.response) console.error(`[TraktIntegration] Trakt API Error Response: Status ${error.response.status}`, JSON.stringify(error.response.data, null, 2)); 

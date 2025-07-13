@@ -123,10 +123,12 @@ async function fetchListContent(listId, userConfig, skip = 0, genre = null, stre
     const isListUserMerged = userConfig.mergedLists?.[catalogIdFromRequest] !== false;
     itemsResult = await fetchMDBListItems(mdbListOriginalId, apiKey, listsMetadata, skip, sortPrefs.sort || 'default', sortPrefs.order || 'desc', false, genre, null, isListUserMerged, userConfig);
   }
-  return itemsResult || null;
+  
   if (!itemsResult || !itemsResult.allItems || itemsResult.allItems.length === 0) {
     console.warn(`[AIOLists] No items returned for listId=${listId}, stremioCatalogType=${stremioCatalogType}, itemTypeHint=${itemTypeHintForFetching}`);
   }
+  
+  return itemsResult || null;
 }
 
 async function createAddon(userConfig) {
@@ -198,12 +200,17 @@ async function createAddon(userConfig) {
     if (listSourceInfo.source === 'tmdb' && listSourceInfo.type === 'movie' && listSourceInfo.originalId) {
       try {
         const { fetchTmdbListItems } = require('../integrations/tmdb');
+        const { enrichItemsWithMetadata } = require('../utils/metadataFetcher');
         const tmdbListResult = await fetchTmdbListItems(listSourceInfo.originalId, userConfig, 0, 'created_at', 'desc');
         if (tmdbListResult && tmdbListResult.allItems && tmdbListResult.allItems.length > 0) {
-          // Use the first movie's poster or logo as the catalog logo
-          const firstItem = tmdbListResult.allItems.find(i => i.poster || i.logo);
+          // Enrich the first item with metadata to get logo from Fanart.tv
+          const firstItem = tmdbListResult.allItems[0];
           if (firstItem) {
-            logoUrl = firstItem.logo || firstItem.poster;
+            const enrichedItems = await enrichItemsWithMetadata([firstItem], userConfig);
+            const enrichedFirstItem = enrichedItems[0];
+            if (enrichedFirstItem && enrichedFirstItem.logo) {
+              logoUrl = enrichedFirstItem.logo;
+            }
           }
         }
       } catch (e) {
@@ -328,6 +335,28 @@ async function createAddon(userConfig) {
     const skip = parseInt(extra?.skip) || 0;
     const genre = extra?.genre || null;
     const searchQuery = extra?.search || null;
+
+    // Map localized/custom types to standard Stremio types
+    let stremioCatalogType = type;
+    if (typeof stremioCatalogType === 'string') {
+      const t = stremioCatalogType.toLowerCase();
+      if (t === 'movie' || t === 'movies' || t.includes('film')) {
+        stremioCatalogType = 'movie';
+      } else if (t === 'series' || t === 'show' || t === 'shows' || t.includes('dizi')) {
+        stremioCatalogType = 'series';
+      } else if (t === 'all' || t === 'hepsi') {
+        stremioCatalogType = 'all';
+      } else if (t === 'anime') {
+        stremioCatalogType = 'anime';
+      } else if (t === 'search') {
+        stremioCatalogType = 'search';
+      } else {
+        stremioCatalogType = 'all';
+      }
+    } else {
+      stremioCatalogType = 'all';
+    }
+
     if ((id.includes('_search')) && searchQuery) {      
       if (!searchQuery || searchQuery.trim().length < 2) return Promise.resolve({ metas: [] });
       try {
@@ -341,11 +370,11 @@ async function createAddon(userConfig) {
           const userSearchSources = userConfig.searchSources || [];
           let sources = userSearchSources.filter(s => s === 'cinemeta' || s === 'trakt' || (s === 'tmdb' && (userConfig.tmdbBearerToken || userConfig.tmdbSessionId)));
           if (sources.length === 0) return Promise.resolve({ metas: [] });
-          searchResults = await searchContent({ query: searchQuery.trim(), type: type || 'all', sources: sources, limit: 50, userConfig: userConfig });
+          searchResults = await searchContent({ query: searchQuery.trim(), type: stremioCatalogType || 'all', sources: sources, limit: 50, userConfig: userConfig });
         }
         let filteredMetas = searchResults.results || [];
-        if ((id === 'aiolists_search_movies' || id === 'aiolists_search_series') && type && type !== 'all' && type !== 'search') {
-          filteredMetas = filteredMetas.filter(result => result.type === type);
+        if ((id === 'aiolists_search_movies' || id === 'aiolists_search_series') && stremioCatalogType && stremioCatalogType !== 'all' && stremioCatalogType !== 'search') {
+          filteredMetas = filteredMetas.filter(result => result.type === stremioCatalogType);
         }
         if (genre && genre !== 'All') {
           filteredMetas = filteredMetas.filter(result => result.genres?.some(g => String(g).toLowerCase() === String(genre).toLowerCase()));
@@ -356,34 +385,14 @@ async function createAddon(userConfig) {
         return Promise.resolve({ metas: [] });
       }
     }
-    // Map localized/custom types to standard Stremio types
-let stremioCatalogType = type;
-if (typeof stremioCatalogType === 'string') {
-  const t = stremioCatalogType.toLowerCase();
-  if (t === 'movie' || t === 'movies' || t.includes('film')) {
-    stremioCatalogType = 'movie';
-  } else if (t === 'series' || t === 'show' || t === 'shows' || t.includes('dizi')) {
-    stremioCatalogType = 'series';
-  } else if (t === 'all' || t === 'hepsi') {
-    stremioCatalogType = 'all';
-  } else if (t === 'anime') {
-    stremioCatalogType = 'anime';
-  } else if (t === 'search') {
-    stremioCatalogType = 'search';
-  } else {
-    stremioCatalogType = 'all';
-  }
-} else {
-  stremioCatalogType = 'all';
-}
-const itemsResult = await fetchListContent(id, userConfig, skip, genre, stremioCatalogType);
+    const itemsResult = await fetchListContent(id, userConfig, skip, genre, stremioCatalogType);
     if (!itemsResult || !itemsResult.allItems) return Promise.resolve({ metas: [] });
     const enrichedItems = await enrichItemsWithMetadata(itemsResult.allItems, userConfig);
     const enrichedResult = { ...itemsResult, allItems: enrichedItems };
     const metadataConfig = { metadataSource: userConfig.metadataSource || 'cinemeta', tmdbLanguage: userConfig.tmdbLanguage || 'en-US' };
     let metas = await convertToStremioFormat(enrichedResult, userConfig.rpdbApiKey, metadataConfig);
-    if (type === 'movie' || type === 'series') {
-        metas = metas.filter(meta => meta.type === type);
+    if (stremioCatalogType === 'movie' || stremioCatalogType === 'series') {
+        metas = metas.filter(meta => meta.type === stremioCatalogType);
     }
     if (genre && genre !== 'All' && metas.length > 0) {
         metas = metas.filter(meta => meta.genres?.some(g => String(g).toLowerCase() === String(genre).toLowerCase()));
