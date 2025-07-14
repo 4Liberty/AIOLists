@@ -346,39 +346,9 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         if (Array.isArray(response.data)) rawTraktEntries = response.data;
         console.log(`[Trakt] Raw entries received:`, rawTraktEntries.length);
     }
-      // Helper to fetch IMDb ID from TMDB if missing
-      async function getImdbIdFromTmdb(tmdbId, type, tmdbBearerToken) {
-        if (!tmdbId) {
-          console.warn(`[Trakt] No TMDB ID provided for IMDb lookup`);
-          return null;
-        }
-        if (!tmdbBearerToken) {
-          console.warn(`[Trakt] No TMDB Bearer Token available for IMDb lookup`);
-          return null;
-        }
-        try {
-          const tmdbType = type === 'series' ? 'tv' : 'movie';
-          const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}`;
-          const headers = { 'Authorization': `Bearer ${tmdbBearerToken}` };
-          console.log(`[Trakt] Fetching IMDb ID from TMDB: ${url}`);
-          const response = await axios.get(url, { headers, timeout: 10000 });
-          const imdbId = response.data?.imdb_id;
-          const finalImdbId = imdbId && imdbId.startsWith('tt') ? imdbId : (imdbId ? `tt${imdbId}` : null);
-          console.log(`[Trakt] TMDB response for ${tmdbId}: IMDb ID = ${finalImdbId}`);
-          return finalImdbId;
-        } catch (e) { 
-          console.warn(`[Trakt] Failed to fetch IMDb ID from TMDB for ${tmdbId}:`, e.message);
-          if (e.response) {
-            console.warn(`[Trakt] TMDB API Error: Status ${e.response.status}`, e.response.data);
-          }
-          return null; 
-        }
-      }
-
-      // Map entries, fetch missing IMDb IDs if needed
-      const tmdbBearerToken = userConfig.tmdbBearerToken || process.env.TMDB_BEARER_TOKEN || require('../config').TMDB_BEARER_TOKEN;
-      console.log(`[Trakt] Using TMDB Bearer Token: ${tmdbBearerToken ? 'YES' : 'NO'}`);
-      const initialItems = await Promise.all(rawTraktEntries.map(async (entry, index) => {
+      
+      // Map entries to standard format (like working version)
+      const initialItems = rawTraktEntries.map((entry, index) => {
       // Log each entry for debugging
       console.log(`[Trakt] Processing entry ${index + 1}/${rawTraktEntries.length}:`, {
         type: entry.type,
@@ -414,40 +384,23 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
           console.log(`[Trakt] Item type mismatch: expected ${itemTypeHint}, got ${resolvedStremioType}, skipping`);
           return null;
         }
-        let imdbId = itemDataForDetails.ids?.imdb;
+        const imdbId = itemDataForDetails.ids?.imdb;
         const tmdbId = itemDataForDetails.ids?.tmdb;
         
         console.log(`[Trakt] Item ${index + 1} IDs: imdb=${imdbId}, tmdb=${tmdbId}`);
         
-        // Ensure IMDb ID has tt prefix
-        if (imdbId && !imdbId.startsWith('tt')) {
-          imdbId = `tt${imdbId}`;
-          console.log(`[Trakt] Fixed IMDb ID format: ${imdbId}`);
-        }
-        
-        // Fallback: fetch IMDb ID from TMDB if missing
-        if (!imdbId && tmdbId) {
-          console.log(`[Trakt] Fetching missing IMDb ID from TMDB for ${tmdbId}`);
-          imdbId = await getImdbIdFromTmdb(tmdbId, resolvedStremioType, tmdbBearerToken);
-        }
-        
-        if (!imdbId && !tmdbId) {
-          console.warn(`[Trakt] No valid IDs found for item ${index + 1}, skipping`);
+        // Simple validation - just check if IMDb ID exists
+        if (!imdbId) {
+          console.warn(`[Trakt] No IMDb ID found for item ${index + 1}, skipping`);
           return null;
         }
         
-        // Determine the primary ID to use
-        let primaryId = imdbId || `tmdb:${tmdbId}`;
-        
         const finalItem = {
-          id: primaryId,
-          imdb_id: imdbId,
+          imdb_id: imdbId, // Use imdb_id directly like working version
           tmdb_id: tmdbId,
           title: itemDataForDetails.title,
-          name: itemDataForDetails.title, // Add name field for compatibility
           year: itemDataForDetails.year,
           overview: itemDataForDetails.overview,
-          description: itemDataForDetails.overview, // Add description field for compatibility
           genres: itemDataForDetails.genres,
           runtime: itemDataForDetails.runtime,
           type: resolvedStremioType,
@@ -455,21 +408,20 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         };
         
         console.log(`[Trakt] Final item ${index + 1}:`, {
-          id: finalItem.id,
+          imdb_id: finalItem.imdb_id,
           title: finalItem.title,
           type: finalItem.type,
           year: finalItem.year
         });
         
         return finalItem;
-      }));
-      const filteredItems = initialItems.filter(item => item !== null);
-      console.log(`[Trakt] Items after mapping/filtering:`, filteredItems.length);
-      if (listId === 'trakt_watchlist' && sortBy === 'added' && filteredItems.length > 0) {
-          filteredItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
+      }).filter(item => item !== null);
+      console.log(`[Trakt] Items after mapping/filtering:`, initialItems.length);
+      if (listId === 'trakt_watchlist' && sortBy === 'added' && initialItems.length > 0) {
+          initialItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
       }
-      const finalResult = { allItems: filteredItems, hasMovies: false, hasShows: false };
-      filteredItems.forEach(item => { if (item.type === 'movie') finalResult.hasMovies = true; else if (item.type === 'series') finalResult.hasShows = true; });
+      const finalResult = { allItems: initialItems, hasMovies: false, hasShows: false };
+      initialItems.forEach(item => { if (item.type === 'movie') finalResult.hasMovies = true; else if (item.type === 'series') finalResult.hasShows = true; });
       console.log(`[Trakt] Final result:`, finalResult);
       return finalResult;
     } catch (error) {
