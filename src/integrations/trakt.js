@@ -62,8 +62,8 @@ async function batchFetchTraktMetadata(items) {
   if (!items || items.length === 0) return [];
 
   // REASONABLE SETTINGS TO AVOID RATE LIMITING
-  const BATCH_SIZE = 10; // Reduced from 20 to be safer
-  const DELAY_BETWEEN_BATCHES = 500; // Increased from 100 to respect API limits
+  const BATCH_SIZE = 20; // Reduced from 20 to be safer
+  const DELAY_BETWEEN_BATCHES = 200; // Increased from 100 to respect API limits
   const DELAY_BETWEEN_REQUESTS = 100; // Added small delay to be safer
 
   const results = [];
