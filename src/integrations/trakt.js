@@ -4,6 +4,7 @@ const { ITEMS_PER_PAGE, TRAKT_CLIENT_ID, TRAKT_REDIRECT_URI, TRAKT_CONCURRENT_RE
 const { getTraktTokens, saveTraktTokens } = require('../utils/remoteStorage');
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
+const TMDB_BASE_URL_V3 = 'https://api.themoviedb.org/3';
 
 // In-memory cache for tokens to reduce Upstash calls
 const tokenCache = new Map();
@@ -22,6 +23,28 @@ function setCachedTokens(userUuid, tokens) {
     tokens,
     timestamp: Date.now()
   });
+}
+
+// Function to get IMDb ID from TMDB using external_ids endpoint
+async function getImdbIdFromTmdb(tmdbId, mediaType, bearerToken) {
+  try {
+    // Convert 'series' to 'tv' for TMDB API
+    const tmdbMediaType = mediaType === 'series' ? 'tv' : mediaType;
+    
+    const response = await axios.get(`${TMDB_BASE_URL_V3}/${tmdbMediaType}/${tmdbId}/external_ids`, {
+      headers: {
+        'accept': 'application/json',
+        'Authorization': `Bearer ${bearerToken}`
+      },
+      timeout: 10000
+    });
+    
+    const externalIds = response.data;
+    return externalIds.imdb_id || null;
+  } catch (error) {
+    console.error(`Error fetching IMDb ID from TMDB for ${mediaType} ${tmdbId}:`, error.message);
+    return null;
+  }
 }
 
 // ... (The rest of the file is the same as the last version you received, but with batch sizes increased and delays removed) ...
