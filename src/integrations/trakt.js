@@ -62,8 +62,8 @@ async function batchFetchTraktMetadata(items) {
   if (!items || items.length === 0) return [];
 
   // REASONABLE SETTINGS TO AVOID RATE LIMITING
-  const BATCH_SIZE = 20; // Reduced from 20 to be safer
-  const DELAY_BETWEEN_BATCHES = 200; // Increased from 100 to respect API limits
+  const BATCH_SIZE = 10; // Reduced from 20 to be safer
+  const DELAY_BETWEEN_BATCHES = 500; // Increased from 100 to respect API limits
   const DELAY_BETWEEN_REQUESTS = 100; // Added small delay to be safer
 
   const results = [];
@@ -149,12 +149,9 @@ async function refreshTraktToken(userConfig) {
       userConfig.traktRefreshToken = newTokens.refreshToken;
       userConfig.traktExpiresAt = newTokens.expiresAt;
       
-      console.log(`[Trakt] Token refresh successful, expires at: ${new Date(newTokens.expiresAt)}`);
-      
       if (userConfig.upstashUrl && userConfig.traktUuid) {
         await saveTraktTokens(userConfig, newTokens);
         setCachedTokens(userConfig.traktUuid, newTokens);
-        console.log(`[Trakt] New tokens saved to Upstash and cached`);
       }
       
       return true;
@@ -177,18 +174,14 @@ async function refreshTraktToken(userConfig) {
   }
 }
 async function initTraktApi(userConfig) {
-  console.log(`[Trakt] Initializing Trakt API...`);
-  
   // First, try to load tokens from cache
   if (userConfig.traktUuid) {
     const cachedTokens = getCachedTokens(userConfig.traktUuid);
     if (cachedTokens) {
-      console.log(`[Trakt] Using cached tokens for user: ${userConfig.traktUuid}`);
       userConfig.traktAccessToken = cachedTokens.accessToken;
       userConfig.traktRefreshToken = cachedTokens.refreshToken;
       userConfig.traktExpiresAt = cachedTokens.expiresAt;
     } else if (userConfig.upstashUrl && userConfig.upstashToken) {
-      console.log(`[Trakt] Loading tokens from Upstash for user: ${userConfig.traktUuid}`);
       try {
         const tokens = await getTraktTokens(userConfig);
         if (tokens) {
@@ -196,7 +189,6 @@ async function initTraktApi(userConfig) {
           userConfig.traktRefreshToken = tokens.refreshToken;
           userConfig.traktExpiresAt = tokens.expiresAt;
           setCachedTokens(userConfig.traktUuid, tokens);
-          console.log(`[Trakt] Tokens loaded from Upstash, expires at: ${new Date(tokens.expiresAt)}`);
         }
       } catch (error) {
         console.warn(`[Trakt] Failed to load tokens from Upstash:`, error.message);
@@ -212,7 +204,6 @@ async function initTraktApi(userConfig) {
   
   // Check if access token is expired and refresh if needed
   if (userConfig.traktExpiresAt && Date.now() >= new Date(userConfig.traktExpiresAt).getTime()) {
-    console.log(`[Trakt] Access token expired, attempting refresh`);
     const refreshResult = await refreshTraktToken(userConfig);
     if (!refreshResult) {
       console.error(`[Trakt] Token refresh failed`);
@@ -226,7 +217,6 @@ async function initTraktApi(userConfig) {
     return false;
   }
   
-  console.log(`[Trakt] API initialization successful`);
   return true;
 }
 function getTraktAuthUrl(state = null) {
@@ -319,21 +309,16 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
   const page = isMetadataCheck ? 1 : Math.floor(skip / limit) + 1;
   const headers = { 'Content-Type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': TRAKT_CLIENT_ID };
   if (!isPublicImport && !isPublicOrTrendingList) {
-    console.log(`[Trakt] Initializing Trakt API for user access`);
     const initResult = await initTraktApi(userConfig);
     if (!initResult) {
       console.error(`[Trakt] Failed to initialize Trakt API for user access`);
       return { allItems: [], hasMovies: false, hasShows: false };
     }
     headers['Authorization'] = `Bearer ${userConfig.traktAccessToken}`;
-    console.log(`[Trakt] Trakt API initialized successfully with token`);
-  } else if (isPublicOrTrendingList) {
-    console.log(`[Trakt] Accessing public/trending list without authentication`);
   }
   let requestUrl, params = { limit, page, extended: 'full' }, rawTraktEntries = [], effectiveItemTypeForEndpoint = itemTypeHint;
   try {
     if (isPublicImport && publicUsername) {
-      console.log(`[Trakt] Fetching public Trakt list: user=${publicUsername}, listId=${listId}, itemTypeHint=${itemTypeHint}`);
         const actualSlug = listId.replace(/^traktpublic_[^_]+_/, '');
         let basePath = `${TRAKT_API_URL}/users/${publicUsername}/lists/${actualSlug}/items`;
         if (itemTypeHint === 'movie') requestUrl = `${basePath}/movies`;
@@ -344,7 +329,6 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
             params.sort_by = sortBy; if (sortOrder) params.sort_how = sortOrder;
         }
     } else if (listId === 'trakt_watchlist') {
-      console.log(`[Trakt] Fetching Trakt watchlist: itemTypeHint=${itemTypeHint}`);
         let typeForEndpoint = itemTypeHint || 'all'; 
         if (itemTypeHint === 'series') typeForEndpoint = 'shows';
         if (itemTypeHint === 'movie') typeForEndpoint = 'movies';
@@ -353,13 +337,11 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         params = { limit, page, extended: 'full' };
         effectiveItemTypeForEndpoint = null; 
     } else if (listId.startsWith('trakt_recommendations_')) {
-      console.log(`[Trakt] Fetching Trakt recommendations: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         effectiveItemTypeForEndpoint = listId.endsWith('_movies') ? 'movie' : (listId.endsWith('_shows') ? 'series' : null);
         if (!effectiveItemTypeForEndpoint) return { allItems: [], hasMovies: false, hasShows: false }; 
         requestUrl = `${TRAKT_API_URL}/recommendations/${effectiveItemTypeForEndpoint === 'series' ? 'shows' : 'movies'}`;
         if (genre && !isMetadataCheck) params.genres = genre.toLowerCase().replace(/\s+/g, '-');
     } else if (listId.startsWith('trakt_trending_') || listId.startsWith('trakt_popular_')) {
-      console.log(`[Trakt] Fetching Trakt trending/popular: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         effectiveItemTypeForEndpoint = listId.includes('_movies') ? 'movie' : (listId.includes('_shows') ? 'series' : null);
         if (!effectiveItemTypeForEndpoint) return { allItems: [], hasMovies: false, hasShows: false }; 
         const endpointType = listId.startsWith('trakt_trending_') ? 'trending' : 'popular';
@@ -367,7 +349,6 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         requestUrl = `${TRAKT_API_URL}/${effectiveItemTypeForEndpoint === 'series' ? 'shows' : 'movies'}/${endpointType}`;
         if (genre && !isMetadataCheck) params.genres = genre.toLowerCase().replace(/\s+/g, '-');
     } else if (listId.startsWith('trakt_')) { 
-      console.log(`[Trakt] Fetching Trakt user list: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         const listSlug = listId.replace('trakt_', '');
         let basePath = `${TRAKT_API_URL}/users/me/lists/${listSlug}/items`;
         if (itemTypeHint === 'movie') { requestUrl = `${basePath}/movies`; effectiveItemTypeForEndpoint = 'movie'; }
@@ -379,28 +360,16 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
       return { allItems: [], hasMovies: false, hasShows: false };
     }
     if (requestUrl) { 
-        console.log(`[Trakt] Requesting URL: ${requestUrl} with params:`, params);
         const response = await axios.get(requestUrl, { headers, params });
         if (Array.isArray(response.data)) rawTraktEntries = response.data;
-        console.log(`[Trakt] Raw entries received:`, rawTraktEntries.length);
     }
       
       // Map entries to standard format (like working version)
       const tmdbBearerToken = userConfig.tmdbBearerToken || process.env.TMDB_BEARER_TOKEN || TMDB_BEARER_TOKEN;
-      console.log(`[Trakt] Using TMDB Bearer Token: ${tmdbBearerToken ? 'YES' : 'NO'}`);
       
       const initialItems = [];
       for (let index = 0; index < rawTraktEntries.length; index++) {
         const entry = rawTraktEntries[index];
-        console.log(`[Trakt] Processing entry ${index + 1}/${rawTraktEntries.length}:`, {
-          type: entry.type,
-          hasMovie: !!entry.movie,
-          hasShow: !!entry.show,
-          movieTitle: entry.movie?.title,
-          showTitle: entry.show?.title,
-          movieIds: entry.movie?.ids,
-          showIds: entry.show?.ids
-        });
         
         let itemDataForDetails, resolvedStremioType, listedAt = entry.listed_at;
         const itemTypeFromEntry = entry.type;
@@ -426,22 +395,17 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         }
         
         if (itemTypeHint && itemTypeHint !== 'all' && resolvedStremioType !== itemTypeHint) {
-          console.log(`[Trakt] Item type mismatch: expected ${itemTypeHint}, got ${resolvedStremioType}, skipping`);
           continue;
         }
         
         const imdbId = itemDataForDetails.ids?.imdb;
         const tmdbId = itemDataForDetails.ids?.tmdb;
         
-        console.log(`[Trakt] Item ${index + 1} IDs: imdb=${imdbId}, tmdb=${tmdbId}`);
-        
         // Enhanced validation with TMDB fallback
         let finalImdbId = imdbId;
         if (!finalImdbId && tmdbId && tmdbBearerToken) {
-          console.log(`[Trakt] Attempting to get IMDb ID from TMDB for item ${index + 1}`);
           try {
             finalImdbId = await getImdbIdFromTmdb(tmdbId, resolvedStremioType, tmdbBearerToken);
-            console.log(`[Trakt] TMDB lookup result for item ${index + 1}: ${finalImdbId}`);
           } catch (error) {
             console.warn(`[Trakt] Failed to get IMDb ID from TMDB for item ${index + 1}:`, error.message);
           }
@@ -464,22 +428,13 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
           listed_at: listedAt
         };
         
-        console.log(`[Trakt] Final item ${index + 1}:`, {
-          imdb_id: finalItem.imdb_id,
-          title: finalItem.title,
-          type: finalItem.type,
-          year: finalItem.year
-        });
-        
         initialItems.push(finalItem);
       }
-      console.log(`[Trakt] Items after mapping/filtering:`, initialItems.length);
       if (listId === 'trakt_watchlist' && sortBy === 'added' && initialItems.length > 0) {
           initialItems.sort((a, b) => { const dateA = a.listed_at ? new Date(a.listed_at) : 0; const dateB = b.listed_at ? new Date(b.listed_at) : 0; return (sortOrder === 'asc' ? dateA - dateB : dateB - dateA); });
       }
       const finalResult = { allItems: initialItems, hasMovies: false, hasShows: false };
       initialItems.forEach(item => { if (item.type === 'movie') finalResult.hasMovies = true; else if (item.type === 'series') finalResult.hasShows = true; });
-      console.log(`[Trakt] Final result:`, finalResult);
       return finalResult;
     } catch (error) {
       console.error(`[TraktIntegration] Critical exception in fetchTraktListItems for list ${listId}: ${error.message}`); 
