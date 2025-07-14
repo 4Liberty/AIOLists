@@ -409,8 +409,13 @@ async function createAddon(userConfig) {
     const itemsResult = await fetchListContent(id, userConfig, skip, genre, stremioCatalogType);
     console.log(`[AIOLists] fetchListContent result for ${id}:`, itemsResult ? `${itemsResult.allItems?.length || 0} items` : 'null');
     
-    // Better null handling - ensure we have valid structure
-    if (!itemsResult || !itemsResult.allItems || itemsResult.allItems.length === 0) {
+    // Handle null/empty results properly
+    if (!itemsResult) {
+      console.log(`[AIOLists] No results returned for ${id}, returning empty metas`);
+      return Promise.resolve({ metas: [] });
+    }
+    
+    if (!itemsResult.allItems || itemsResult.allItems.length === 0) {
       console.log(`[AIOLists] No items found for ${id}, returning empty metas`);
       return Promise.resolve({ metas: [] });
     }

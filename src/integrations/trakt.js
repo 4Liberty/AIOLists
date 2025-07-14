@@ -5,6 +5,25 @@ const { getTraktTokens, saveTraktTokens } = require('../utils/remoteStorage');
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
 
+// In-memory cache for tokens to reduce Upstash calls
+const tokenCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedTokens(userUuid) {
+  const cached = tokenCache.get(userUuid);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.tokens;
+  }
+  return null;
+}
+
+function setCachedTokens(userUuid, tokens) {
+  tokenCache.set(userUuid, {
+    tokens,
+    timestamp: Date.now()
+  });
+}
+
 // ... (The rest of the file is the same as the last version you received, but with batch sizes increased and delays removed) ...
 
 async function batchFetchTraktMetadata(items) {
@@ -67,44 +86,110 @@ async function getTraktUserSettings(accessToken) {
 }
 async function refreshTraktToken(userConfig) {
   const refreshToken = userConfig.traktRefreshToken;
-  if (!refreshToken) return false;
+  if (!refreshToken) {
+    console.warn(`[Trakt] No refresh token available for token refresh`);
+    return false;
+  }
+  
+  console.log(`[Trakt] Attempting to refresh Trakt token`);
   try {
-    const response = await axios.post(`${TRAKT_API_URL}/oauth/token`, { refresh_token: refreshToken, client_id: TRAKT_CLIENT_ID, redirect_uri: TRAKT_REDIRECT_URI, grant_type: 'refresh_token' });
+    const response = await axios.post(`${TRAKT_API_URL}/oauth/token`, { 
+      refresh_token: refreshToken, 
+      client_id: TRAKT_CLIENT_ID, 
+      redirect_uri: TRAKT_REDIRECT_URI, 
+      grant_type: 'refresh_token' 
+    });
+    
     if (response.status === 200 && response.data) {
-      const newTokens = { accessToken: response.data.access_token, refreshToken: response.data.refresh_token, expiresAt: Date.now() + (response.data.expires_in * 1000) };
+      const newTokens = { 
+        accessToken: response.data.access_token, 
+        refreshToken: response.data.refresh_token, 
+        expiresAt: Date.now() + (response.data.expires_in * 1000) 
+      };
+      
       userConfig.traktAccessToken = newTokens.accessToken;
       userConfig.traktRefreshToken = newTokens.refreshToken;
       userConfig.traktExpiresAt = newTokens.expiresAt;
-      if (userConfig.upstashUrl && userConfig.traktUuid) await saveTraktTokens(userConfig, newTokens);
+      
+      console.log(`[Trakt] Token refresh successful, expires at: ${new Date(newTokens.expiresAt)}`);
+      
+      if (userConfig.upstashUrl && userConfig.traktUuid) {
+        await saveTraktTokens(userConfig, newTokens);
+        setCachedTokens(userConfig.traktUuid, newTokens);
+        console.log(`[Trakt] New tokens saved to Upstash and cached`);
+      }
+      
       return true;
     }
+    
+    console.error(`[Trakt] Token refresh failed: Invalid response`);
     return false;
   } catch (error) {
+    console.error(`[Trakt] Token refresh failed:`, error.message);
     if (error.response?.status === 401) {
+      console.error(`[Trakt] Refresh token is invalid or expired - clearing tokens`);
       userConfig.traktAccessToken = null;
       userConfig.traktRefreshToken = null;
       userConfig.traktExpiresAt = null;
-      if (userConfig.upstashUrl && userConfig.traktUuid) await saveTraktTokens(userConfig, { accessToken: null, refreshToken: null, expiresAt: null });
+      if (userConfig.upstashUrl && userConfig.traktUuid) {
+        await saveTraktTokens(userConfig, { accessToken: null, refreshToken: null, expiresAt: null });
+      }
     }
     return false;
   }
 }
 async function initTraktApi(userConfig) {
-  if (userConfig.upstashUrl && userConfig.upstashToken && userConfig.traktUuid) {
-    const tokens = await getTraktTokens(userConfig);
-    if (tokens) {
-      userConfig.traktAccessToken = tokens.accessToken;
-      userConfig.traktRefreshToken = tokens.refreshToken;
-      userConfig.traktExpiresAt = tokens.expiresAt;
-      if (Date.now() >= new Date(userConfig.traktExpiresAt).getTime()) return await refreshTraktToken(userConfig);
-      return true;
+  console.log(`[Trakt] Initializing Trakt API...`);
+  
+  // First, try to load tokens from cache
+  if (userConfig.traktUuid) {
+    const cachedTokens = getCachedTokens(userConfig.traktUuid);
+    if (cachedTokens) {
+      console.log(`[Trakt] Using cached tokens for user: ${userConfig.traktUuid}`);
+      userConfig.traktAccessToken = cachedTokens.accessToken;
+      userConfig.traktRefreshToken = cachedTokens.refreshToken;
+      userConfig.traktExpiresAt = cachedTokens.expiresAt;
+    } else if (userConfig.upstashUrl && userConfig.upstashToken) {
+      console.log(`[Trakt] Loading tokens from Upstash for user: ${userConfig.traktUuid}`);
+      try {
+        const tokens = await getTraktTokens(userConfig);
+        if (tokens) {
+          userConfig.traktAccessToken = tokens.accessToken;
+          userConfig.traktRefreshToken = tokens.refreshToken;
+          userConfig.traktExpiresAt = tokens.expiresAt;
+          setCachedTokens(userConfig.traktUuid, tokens);
+          console.log(`[Trakt] Tokens loaded from Upstash, expires at: ${new Date(tokens.expiresAt)}`);
+        }
+      } catch (error) {
+        console.warn(`[Trakt] Failed to load tokens from Upstash:`, error.message);
+      }
     }
   }
-  if (userConfig.traktAccessToken && userConfig.traktExpiresAt) {
-    if (Date.now() >= new Date(userConfig.traktExpiresAt).getTime()) return await refreshTraktToken(userConfig);
-    return true;
+  
+  // Check if we have any tokens
+  if (!userConfig.traktAccessToken && !userConfig.traktRefreshToken) {
+    console.warn(`[Trakt] No Trakt tokens available`);
+    return false;
   }
-  return false;
+  
+  // Check if access token is expired and refresh if needed
+  if (userConfig.traktExpiresAt && Date.now() >= new Date(userConfig.traktExpiresAt).getTime()) {
+    console.log(`[Trakt] Access token expired, attempting refresh`);
+    const refreshResult = await refreshTraktToken(userConfig);
+    if (!refreshResult) {
+      console.error(`[Trakt] Token refresh failed`);
+      return false;
+    }
+  }
+  
+  // Validate we have a valid access token
+  if (!userConfig.traktAccessToken) {
+    console.error(`[Trakt] No valid access token available after initialization`);
+    return false;
+  }
+  
+  console.log(`[Trakt] API initialization successful`);
+  return true;
 }
 function getTraktAuthUrl(state = null) {
   let url = `${TRAKT_API_URL}/oauth/authorize?response_type=code&client_id=${TRAKT_CLIENT_ID}&redirect_uri=${encodeURIComponent(TRAKT_REDIRECT_URI)}`;
@@ -171,7 +256,7 @@ async function fetchPublicTraktListDetails(traktListUrl) {
 async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank', sortOrder = 'asc', isPublicImport = false, publicUsername = null, itemTypeHint = null, genre = null, isMetadataCheck = false) {
   if (!listId) {
     console.error(`[Trakt] No listId provided`);
-    return { allItems: [], hasMovies: false, hasShows: false };
+    return null;
   }
   
   console.log(`[Trakt] fetchTraktListItems called: listId=${listId}, skip=${skip}, sortBy=${sortBy}, sortOrder=${sortOrder}, isPublicImport=${isPublicImport}, publicUsername=${publicUsername}, itemTypeHint=${itemTypeHint}, genre=${genre}, isMetadataCheck=${isMetadataCheck}`);
@@ -179,25 +264,33 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
   // Validate configuration
   if (!userConfig) {
     console.error(`[Trakt] No userConfig provided`);
-    return { allItems: [], hasMovies: false, hasShows: false };
+    return null;
   }
   
-  if (!isPublicImport && !userConfig.traktAccessToken) {
-    console.error(`[Trakt] No Trakt access token available for private list access`);
-    return { allItems: [], hasMovies: false, hasShows: false };
+  // Allow access for public lists or trending/popular lists without authentication
+  const isPublicOrTrendingList = isPublicImport || 
+    listId.startsWith('trakt_trending_') || 
+    listId.startsWith('trakt_popular_') || 
+    listId.startsWith('trakt_recommendations_');
+  
+  if (!isPublicOrTrendingList && !userConfig.traktAccessToken && !userConfig.traktRefreshToken) {
+    console.error(`[Trakt] No Trakt tokens available for private list access`);
+    return null;
   }
   const limit = isMetadataCheck ? 1 : ITEMS_PER_PAGE;
   const page = isMetadataCheck ? 1 : Math.floor(skip / limit) + 1;
   const headers = { 'Content-Type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': TRAKT_CLIENT_ID };
-  if (!isPublicImport) {
+  if (!isPublicImport && !isPublicOrTrendingList) {
     console.log(`[Trakt] Initializing Trakt API for user access`);
     const initResult = await initTraktApi(userConfig);
     if (!initResult) {
       console.error(`[Trakt] Failed to initialize Trakt API for user access`);
-      return { allItems: [], hasMovies: false, hasShows: false };
+      return null;
     }
     headers['Authorization'] = `Bearer ${userConfig.traktAccessToken}`;
-    console.log(`[Trakt] Trakt API initialized successfully`);
+    console.log(`[Trakt] Trakt API initialized successfully with token`);
+  } else if (isPublicOrTrendingList) {
+    console.log(`[Trakt] Accessing public/trending list without authentication`);
   }
   let requestUrl, params = { limit, page, extended: 'full' }, rawTraktEntries = [], effectiveItemTypeForEndpoint = itemTypeHint;
   try {
