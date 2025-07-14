@@ -6,10 +6,15 @@ class RateLimiter {
     this.interval = interval;
     this.tokens = tokensPerInterval;
     this.queue = [];
-    setInterval(() => {
+    this._intervalId = setInterval(() => {
       this.tokens = this.tokensPerInterval;
       this._processQueue();
     }, this.interval);
+    
+    // Prevent the interval from keeping the process alive
+    if (this._intervalId.unref) {
+      this._intervalId.unref();
+    }
   }
 
   _processQueue() {
@@ -28,6 +33,17 @@ class RateLimiter {
     return new Promise((resolve) => {
       this.queue.push({ resolve });
     });
+  }
+  
+  /**
+   * Cleanup method to prevent memory leaks
+   */
+  destroy() {
+    if (this._intervalId) {
+      clearInterval(this._intervalId);
+      this._intervalId = null;
+    }
+    this.queue = [];
   }
 }
 

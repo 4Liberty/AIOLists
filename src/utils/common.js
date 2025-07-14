@@ -1,23 +1,23 @@
 // src/utils/common.js
 
 /**
- * Kontrollerar om ett list-ID representerar en watchlist.
- * @param {string} listId - List-ID att kontrollera.
+ * Checks if a list ID represents a watchlist.
+ * @param {string} listId - List ID to check.
  * @returns {boolean}
  */
 function isWatchlist(listId) {
     if (!listId) return false;
     return listId.endsWith('watchlist') || 
            listId.endsWith('watchlist-W') ||
-           listId.includes('trakt_watchlist'); // Täcker både trakt_watchlist och aiolists-trakt_watchlist-T etc.
+           listId.includes('trakt_watchlist'); // Covers both trakt_watchlist and aiolists-trakt_watchlist-T etc.
   }
   
   /**
-   * Sätter lämpliga cache-rubriker.
-   * Watchlists får ingen cache. Andra listor får en kort cache-tid
-   * för att låta Stremio hantera den huvudsakliga cachningen.
-   * @param {Object} res - Express response-objekt.
-   * @param {string} listId - List-ID.
+   * Sets appropriate cache headers.
+   * Watchlists get no cache. Other lists get a short cache time
+   * to let Stremio handle the main caching.
+   * @param {Object} res - Express response object.
+   * @param {string} listId - List ID.
    */
   function setCacheHeaders(res, listId) {
     if (isWatchlist(listId)) {
@@ -25,7 +25,7 @@ function isWatchlist(listId) {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
     } else {
-      // Kort cache-tid (t.ex. 5 minuter) för att förlita sig på Stremio
+      // Short cache time (e.g. 5 minutes) to rely on Stremio
       res.setHeader('Cache-Control', `public, max-age=${5 * 60}`); 
     }
   }

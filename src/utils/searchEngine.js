@@ -236,14 +236,13 @@ async function searchTMDBMulti(query, limit, userConfig) {
           // Get external IDs to find IMDb ID
           const externalIds = await getTMDBExternalIds(item.id, item.media_type, userConfig.tmdbBearerToken || TMDB_BEARER_TOKEN);
           
-          const convertedItem = convertTMDBItemToStremioFormat(item, item.media_type, externalIds.imdb_id, language);
-          
-          // Preserve person context if available
-          if (item.foundVia) {
-            convertedItem.foundVia = item.foundVia;
+          // Add defensive check for externalIds
+          if (externalIds && typeof externalIds === 'object') {
+            results.push(convertTMDBItemToStremioFormat(item, item.media_type, externalIds.imdb_id, language));
+          } else {
+            // Fallback without IMDb ID
+            results.push(convertTMDBItemToStremioFormat(item, item.media_type, null, language));
           }
-          
-          results.push(convertedItem);
         } catch (error) {
           console.error(`Error processing TMDB multi result:`, error.message);
         }
@@ -429,7 +428,13 @@ async function searchTMDBContent(query, type, limit, bearerToken, language) {
           // Get external IDs to find IMDb ID
           const externalIds = await getTMDBExternalIds(item.id, searchType, bearerToken);
           
-          results.push(convertTMDBItemToStremioFormat(item, searchType, externalIds.imdb_id, language));
+          // Add defensive check for externalIds
+          if (externalIds && typeof externalIds === 'object') {
+            results.push(convertTMDBItemToStremioFormat(item, searchType, externalIds.imdb_id, language));
+          } else {
+            // Fallback without IMDb ID
+            results.push(convertTMDBItemToStremioFormat(item, searchType, null, language));
+          }
         }
       }
     } catch (error) {
@@ -512,7 +517,9 @@ async function searchTMDBByPerson(query, type, limit, bearerToken, language) {
             // Get external IDs for each credit
             const externalIds = await getTMDBExternalIds(credit.id, credit.media_type, bearerToken);
             
-            const convertedItem = convertTMDBItemToStremioFormat(credit, credit.media_type, externalIds.imdb_id, language);
+            // Add defensive check for externalIds
+            const imdbId = (externalIds && typeof externalIds === 'object') ? externalIds.imdb_id : null;
+            const convertedItem = convertTMDBItemToStremioFormat(credit, credit.media_type, imdbId, language);
             
             // Add person context
             convertedItem.foundVia = `${person.name} (${credit.job || 'Cast'})`;
@@ -1192,4 +1199,4 @@ module.exports = {
   searchAnime,
   enhanceSearchResultsWithTmdbLanguage,
   applyRpdbPostersToSearchResults
-}; 
+};
