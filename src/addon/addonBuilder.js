@@ -379,7 +379,7 @@ async function createAddon(userConfig) {
     console.log(`[AIOLists] Catalog handler: id=${id}, originalType=${type}, mappedType=${stremioCatalogType}, skip=${skip}, genre=${genre}`);
 
     if ((id.includes('_search')) && searchQuery) {      
-      if (!searchQuery || searchQuery.trim().length < 2) return Promise.resolve({ metas: [] });
+      if (!searchQuery || searchQuery.trim().length < 2) return { metas: [] };
       try {
         const { searchContent } = require('../utils/searchEngine');
         let searchResults;
@@ -390,7 +390,7 @@ async function createAddon(userConfig) {
         } else {
           const userSearchSources = userConfig.searchSources || [];
           let sources = userSearchSources.filter(s => s === 'cinemeta' || s === 'trakt' || (s === 'tmdb' && (userConfig.tmdbBearerToken || userConfig.tmdbSessionId)));
-          if (sources.length === 0) return Promise.resolve({ metas: [] });
+          if (sources.length === 0) return { metas: [] };
           searchResults = await searchContent({ query: searchQuery.trim(), type: stremioCatalogType || 'all', sources: sources, limit: 50, userConfig: userConfig });
         }
         let filteredMetas = searchResults.results || [];
@@ -400,10 +400,10 @@ async function createAddon(userConfig) {
         if (genre && genre !== 'All') {
           filteredMetas = filteredMetas.filter(result => result.genres?.some(g => String(g).toLowerCase() === String(genre).toLowerCase()));
         }
-        return Promise.resolve({ metas: filteredMetas, cacheMaxAge: 300 });
+        return { metas: filteredMetas, cacheMaxAge: 300 };
       } catch (error) {
         console.error(`[Search] Error in search catalog "${id}" for "${searchQuery}":`, error);
-        return Promise.resolve({ metas: [] });
+        return { metas: [] };
       }
     }
     const itemsResult = await fetchListContent(id, userConfig, skip, genre, stremioCatalogType);
@@ -412,12 +412,12 @@ async function createAddon(userConfig) {
     // Handle null/empty results properly
     if (!itemsResult) {
       console.log(`[AIOLists] No results returned for ${id}, returning empty metas`);
-      return Promise.resolve({ metas: [] });
+      return { metas: [] };
     }
     
     if (!itemsResult.allItems || itemsResult.allItems.length === 0) {
       console.log(`[AIOLists] No items found for ${id}, returning empty metas`);
-      return Promise.resolve({ metas: [] });
+      return { metas: [] };
     }
     
     const enrichedItems = await enrichItemsWithMetadata(itemsResult.allItems, userConfig);
@@ -438,13 +438,13 @@ async function createAddon(userConfig) {
     }
     const cacheMaxAge = (id === 'random_mdblist_catalog' || isWatchlist(id)) ? 0 : (5 * 60);
     console.log(`[AIOLists] Final result for ${id}:`, metas.length, 'items');
-    return Promise.resolve({ metas, cacheMaxAge });
+    return { metas, cacheMaxAge };
   });
 
   builder.defineMetaHandler(async ({ type, id }) => {
     try {
         if (!id.startsWith('tt') && !id.startsWith('tmdb:')) {
-            return Promise.resolve({ meta: null });
+            return { meta: null };
         }
         const itemToEnrich = [{ id: id, type: type, imdb_id: id.startsWith('tt') ? id : undefined }];
         const enrichedItems = await enrichItemsWithMetadata(itemToEnrich, userConfig);
@@ -452,13 +452,13 @@ async function createAddon(userConfig) {
             const meta = enrichedItems[0];
             meta.id = id;
             Object.keys(meta).forEach(key => { if (meta[key] === undefined) delete meta[key]; });
-            return Promise.resolve({ meta, cacheMaxAge: 24 * 60 * 60 });
+            return { meta, cacheMaxAge: 24 * 60 * 60 };
         }
         console.error(`[MetaHandler] All metadata sources failed for ${id}`);
-        return Promise.resolve({ meta: { id, type, name: "Details unavailable" } });
+        return { meta: { id, type, name: "Details unavailable" } };
     } catch (error) {
         console.error(`Error in meta handler for ${id}:`, error);
-        return Promise.resolve({ meta: { id, type, name: "Error loading details" } });
+        return { meta: { id, type, name: "Error loading details" } };
     }
   });
 

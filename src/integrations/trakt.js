@@ -1,6 +1,6 @@
 // src/integrations/trakt.js
 const axios = require('axios');
-const { ITEMS_PER_PAGE, TRAKT_CLIENT_ID, TRAKT_REDIRECT_URI, TRAKT_CONCURRENT_REQUESTS } = require('../config');
+const { ITEMS_PER_PAGE, TRAKT_CLIENT_ID, TRAKT_REDIRECT_URI, TRAKT_CONCURRENT_REQUESTS, TMDB_BEARER_TOKEN } = require('../config');
 const { getTraktTokens, saveTraktTokens } = require('../utils/remoteStorage');
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
@@ -23,6 +23,17 @@ function setCachedTokens(userUuid, tokens) {
     tokens,
     timestamp: Date.now()
   });
+  
+  // Cleanup old entries to prevent memory leaks
+  if (tokenCache.size > 100) { // Keep only 100 most recent entries
+    const sortedEntries = Array.from(tokenCache.entries())
+      .sort((a, b) => b[1].timestamp - a[1].timestamp);
+    
+    tokenCache.clear();
+    sortedEntries.slice(0, 50).forEach(([key, value]) => {
+      tokenCache.set(key, value);
+    });
+  }
 }
 
 // Function to get IMDb ID from TMDB using external_ids endpoint
@@ -47,15 +58,13 @@ async function getImdbIdFromTmdb(tmdbId, mediaType, bearerToken) {
   }
 }
 
-// ... (The rest of the file is the same as the last version you received, but with batch sizes increased and delays removed) ...
-
 async function batchFetchTraktMetadata(items) {
   if (!items || items.length === 0) return [];
 
-  // AGGRESSIVE SETTINGS FOR SINGLE USER
-  const BATCH_SIZE = 20; // Increased from 5
-  const DELAY_BETWEEN_BATCHES = 100; // Reduced from 2500
-  const DELAY_BETWEEN_REQUESTS = 0; // Reduced from 500
+  // REASONABLE SETTINGS TO AVOID RATE LIMITING
+  const BATCH_SIZE = 10; // Reduced from 20 to be safer
+  const DELAY_BETWEEN_BATCHES = 500; // Increased from 100 to respect API limits
+  const DELAY_BETWEEN_REQUESTS = 100; // Added small delay to be safer
 
   const results = [];
   
@@ -63,6 +72,12 @@ async function batchFetchTraktMetadata(items) {
     const batch = items.slice(i, i + BATCH_SIZE);
     
     const batchPromises = batch.map(async (item) => {
+      // Add validation for item structure
+      if (!item || typeof item !== 'object') {
+        console.warn(`[Trakt] Invalid item in batch:`, item);
+        return item;
+      }
+      
       if (!item.imdb_id || !item.type) {
         return item;
       }
@@ -279,7 +294,7 @@ async function fetchPublicTraktListDetails(traktListUrl) {
 async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank', sortOrder = 'asc', isPublicImport = false, publicUsername = null, itemTypeHint = null, genre = null, isMetadataCheck = false) {
   if (!listId) {
     console.error(`[Trakt] No listId provided`);
-    return null;
+    return { allItems: [], hasMovies: false, hasShows: false };
   }
   
   console.log(`[Trakt] fetchTraktListItems called: listId=${listId}, skip=${skip}, sortBy=${sortBy}, sortOrder=${sortOrder}, isPublicImport=${isPublicImport}, publicUsername=${publicUsername}, itemTypeHint=${itemTypeHint}, genre=${genre}, isMetadataCheck=${isMetadataCheck}`);
@@ -287,7 +302,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
   // Validate configuration
   if (!userConfig) {
     console.error(`[Trakt] No userConfig provided`);
-    return null;
+    return { allItems: [], hasMovies: false, hasShows: false };
   }
   
   // Allow access for public lists or trending/popular lists without authentication
@@ -298,7 +313,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
   
   if (!isPublicOrTrendingList && !userConfig.traktAccessToken && !userConfig.traktRefreshToken) {
     console.error(`[Trakt] No Trakt tokens available for private list access`);
-    return null;
+    return { allItems: [], hasMovies: false, hasShows: false };
   }
   const limit = isMetadataCheck ? 1 : ITEMS_PER_PAGE;
   const page = isMetadataCheck ? 1 : Math.floor(skip / limit) + 1;
@@ -308,7 +323,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
     const initResult = await initTraktApi(userConfig);
     if (!initResult) {
       console.error(`[Trakt] Failed to initialize Trakt API for user access`);
-      return null;
+      return { allItems: [], hasMovies: false, hasShows: false };
     }
     headers['Authorization'] = `Bearer ${userConfig.traktAccessToken}`;
     console.log(`[Trakt] Trakt API initialized successfully with token`);
@@ -340,13 +355,13 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
     } else if (listId.startsWith('trakt_recommendations_')) {
       console.log(`[Trakt] Fetching Trakt recommendations: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         effectiveItemTypeForEndpoint = listId.endsWith('_movies') ? 'movie' : (listId.endsWith('_shows') ? 'series' : null);
-        if (!effectiveItemTypeForEndpoint) return null; 
+        if (!effectiveItemTypeForEndpoint) return { allItems: [], hasMovies: false, hasShows: false }; 
         requestUrl = `${TRAKT_API_URL}/recommendations/${effectiveItemTypeForEndpoint === 'series' ? 'shows' : 'movies'}`;
         if (genre && !isMetadataCheck) params.genres = genre.toLowerCase().replace(/\s+/g, '-');
     } else if (listId.startsWith('trakt_trending_') || listId.startsWith('trakt_popular_')) {
       console.log(`[Trakt] Fetching Trakt trending/popular: listId=${listId}, itemTypeHint=${itemTypeHint}`);
         effectiveItemTypeForEndpoint = listId.includes('_movies') ? 'movie' : (listId.includes('_shows') ? 'series' : null);
-        if (!effectiveItemTypeForEndpoint) return null; 
+        if (!effectiveItemTypeForEndpoint) return { allItems: [], hasMovies: false, hasShows: false }; 
         const endpointType = listId.startsWith('trakt_trending_') ? 'trending' : 'popular';
         if (headers.Authorization) delete headers.Authorization;
         requestUrl = `${TRAKT_API_URL}/${effectiveItemTypeForEndpoint === 'series' ? 'shows' : 'movies'}/${endpointType}`;
@@ -361,7 +376,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
         if (sortBy && !isMetadataCheck) params.sort_by = sortBy; 
         if (sortOrder && !isMetadataCheck) params.sort_how = sortOrder;
     } else {
-      return null;
+      return { allItems: [], hasMovies: false, hasShows: false };
     }
     if (requestUrl) { 
         console.log(`[Trakt] Requesting URL: ${requestUrl} with params:`, params);
@@ -371,7 +386,7 @@ async function fetchTraktListItems(listId, userConfig, skip = 0, sortBy = 'rank'
     }
       
       // Map entries to standard format (like working version)
-      const tmdbBearerToken = userConfig.tmdbBearerToken || process.env.TMDB_BEARER_TOKEN || require('../config').TMDB_BEARER_TOKEN;
+      const tmdbBearerToken = userConfig.tmdbBearerToken || process.env.TMDB_BEARER_TOKEN || TMDB_BEARER_TOKEN;
       console.log(`[Trakt] Using TMDB Bearer Token: ${tmdbBearerToken ? 'YES' : 'NO'}`);
       
       const initialItems = [];
